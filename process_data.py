@@ -57,35 +57,59 @@ def sliding_window_generator(data, feature_columns, label_column, window_size=6,
             y_batch.append(arr_label[j+window_size])
         yield np.array(X_batch), np.array(y_batch)
 
-# test generator
+# ... (giữ nguyên phần trước: load, merge, clean, scaling, generator def)
+
+# Test generator
 all_features = feature_cols + ['asset_id']
 gen = sliding_window_generator(df_all, all_features, 'status_type_id', window_size=6, batch_size=512)
-
 X_batch, y_batch = next(gen)
 print("One batch X shape:", X_batch.shape)
 print("One batch y shape:", y_batch.shape)
 
-# output to csv file
+# Output to csv file
 df_all.to_csv("df_all_clean.csv", index=False)
 print("CSV converted")
 
+# ========== FIX: Không stack hết, mà lưu từng batch + split index ==========
+# Tạo thư mục batches
+import os
+os.makedirs('batches', exist_ok=True)
 
-X, y = [], []
+# Lưu tất cả batches (không append vào list lớn)
+batch_idx = 0
+total_samples = 0
+batch_shapes = []  # Để theo dõi
 for Xb, yb in sliding_window_generator(df_all, all_features, 'status_type_id', window_size=6, batch_size=2048):
-    X.append(Xb)
-    y.append(yb)
+    np.save(f'batches/X_batch_{batch_idx}.npy', Xb)
+    np.save(f'batches/y_batch_{batch_idx}.npy', yb)
+    total_samples += len(yb)
+    batch_shapes.append((Xb.shape, yb.shape))
+    batch_idx += 1
+    print(f"Saved batch {batch_idx}, X shape: {Xb.shape}, y shape: {yb.shape}")
 
-X = np.vstack(X)
-y = np.hstack(y)
+print(f"Total batches: {batch_idx}, Total samples: {total_samples}")
 
-print("Final X shape:", X.shape)
-print("Final y shape:", y.shape)
+# Train/test split trên INDEX (không cần load X/y)
+n_total = total_samples  # Tổng windows
+n_val = int(0.2 * n_total)
+n_train = n_total - n_val
 
-#train/test split
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, shuffle=False)
+# Lưu index split (danh sách batch nào thuộc train/val)
+train_batches = []  # List index batch cho train
+val_batches = []    # Cho val
+current_sample = 0
+for b_idx, (x_shape, y_shape) in enumerate(batch_shapes):
+    batch_size = y_shape[0]
+    if current_sample + batch_size <= n_train:
+        train_batches.append(b_idx)
+        current_sample += batch_size
+    else:
+        val_batches.append(b_idx)
 
-np.save("X_train.npy", X_train)
-np.save("X_val.npy", X_val)
-np.save("y_train.npy", y_train)
-np.save("y_val.npy", y_val)
+# Lưu split info
+np.save('train_batch_indices.npy', np.array(train_batches))
+np.save('val_batch_indices.npy', np.array(val_batches))
+print(f"Train batches: {len(train_batches)} (samples: {n_train})")
+print(f"Val batches: {len(val_batches)} (samples: {n_val})")
 
+print("✅ Fix hoàn tất: Batches lưu riêng, split trên index. Không OOM!")
