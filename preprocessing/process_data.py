@@ -8,8 +8,8 @@ from sklearn.model_selection import train_test_split
 # Constants
 TEST_SIZE = 0.2
 WINDOW_SIZE = 6
-BATCH_SIZE_GEN = 2048  # Batch size khi gen
-BATCH_SIZE_TEST = 512  # Batch size test gen
+BATCH_SIZE_GEN = 2048
+BATCH_SIZE_TEST = 512 
 DATA_PATH = "Dataset/Wind_Farm_A/datasets/"
 EVENT_INFO_PATH = "Dataset/Wind_Farm_A/event_info.csv"
 OUTPUT_CSV = "df_all_clean.csv"
