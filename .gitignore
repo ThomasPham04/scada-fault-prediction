@@ -3,3 +3,6 @@ Dataset/
 *.csv
 test.py
 tf_env/
+analyze_data.py
+*.h5
+*zip

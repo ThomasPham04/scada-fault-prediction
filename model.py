@@ -1,6 +1,7 @@
 import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+from tensorflow import keras 
+# from tensorflow.keras.models import Sequential
+# from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.callbacks import EarlyStopping  # Tùy chọn: Dừng sớm nếu val loss không cải thiện
 import os
 
@@ -27,11 +28,29 @@ def data_generator(batch_ids):
 # Build model (LSTM cơ bản cho binary classification: anomaly/normal)
 # Hard-code num_features = 82 dựa trên shape X_batch từ process_data (window=6)
 input_shape = (6, 82)
-model = Sequential([
-    LSTM(50, return_sequences=True, input_shape=input_shape),
-    LSTM(50),
-    Dense(1, activation='sigmoid')  # Output: probability anomaly (0-1)
-])
+# model = Sequential([
+#     LSTM(50, return_sequences=True, input_shape=input_shape),
+#     LSTM(50),
+#     Dense(1, activation='sigmoid'),  # Output: probability anomaly (0-1)
+#     Dropout(0.5),
+#     Dense(1)
+# ])
+model = keras.models.Sequential()
+
+# First Layer
+model.add(keras.layers.LSTM(64, return_sequences=True, input_shape=(input_shape)))
+
+# Second Layer
+model.add(keras.layers.LSTM(64, return_sequences=False))
+
+# 3rd Layer (Dense)
+model.add(keras.layers.Dense(128, activation="relu"))
+
+# 4th Layer (Dropout)
+model.add(keras.layers.Dropout(0.5))
+
+# Final Output Layer
+model.add(keras.layers.Dense(1))
 
 model.compile(
     optimizer='adam',
@@ -58,7 +77,7 @@ print("====================Training model=========================")
 history = model.fit(
     train_gen,
     steps_per_epoch=steps_train,
-    epochs=1,
+    epochs=20,
     validation_data=val_gen,
     validation_steps=steps_val,
     callbacks=[early_stop],
