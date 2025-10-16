@@ -36,46 +36,57 @@ def load_raw_data(data_path: str) -> pd.DataFrame:
 
 def merge_event_info(df: pd.DataFrame, event_info_path: str) -> pd.DataFrame:
     """Merge event_info with df_all."""
-    event_info = pd.read_csv(event_info_path, sep=";")
-    df_merged = df.merge(event_info[['event_id', 'event_label']], on='event_id', how='left')
+    event_info = pd.read_csv(event_info_path + "event_info.csv", sep=";")
+    df_merged = df.merge(
+        event_info[["event_id", "event_label", "event_description"]],
+        on="event_id",
+        how="left"
+    )
+    df_merged["event_label"] = df_merged["event_label"].map({"normal": 0, "anomaly": 1})
+    df_merged["event_description"] = df_merged["event_description"].fillna("normal")
+    df_merged["event_description"] = df_merged["event_description"].replace("", "normal")
     print(f"[process_data] Unique labels: {df_merged['event_label'].unique()}")
     return df_merged
 
 def select_and_clean_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list]:
-    """Select features, fill NaN, scale numeric cols."""
+    """Select features, fill NaN, scale numeric cols.
+    Returns:
+        tuple: (cleaned DataFrame, list of selected feature column names)
+    """
     feature_cols = [col for col in df.columns if "sensor" in col or "power" in col or "wind_speed" in col]
-    df_selected = df[['time_stamp', 'asset_id', 'status_type_id', 'event_id', 'event_label'] + feature_cols].copy()  # Force copy
-    
-    # Fill NaN numeric
-    num_cols = df_selected[feature_cols].select_dtypes(include=[np.number]).columns
-    df_selected.loc[:, num_cols] = df_selected[num_cols].interpolate().ffill().bfill()  # Dùng .loc
-    
+    df[feature_cols] = df[feature_cols].interpolate().ffill().bfill()
     # Scale
     scaler = StandardScaler()
-    df_selected.loc[:, num_cols] = scaler.fit_transform(df_selected[num_cols])  # Dùng .loc
+    df.loc[:, feature_cols] = scaler.fit_transform(df[feature_cols])
     
-    print(f"[process_data] Data after cleaning & scaling: {df_selected.shape}")
-    return df_selected, feature_cols
+    return df, feature_cols
 
-def sliding_window_generator(data: pd.DataFrame, feature_columns: list, label_column: str, 
+def sliding_window_generator(df: pd.DataFrame, feature_cols: list, label_col: str,
                              window_size: int = WINDOW_SIZE, batch_size: int = BATCH_SIZE_GEN):
-    """Generate sliding windows in batches (yield X, y)."""
-    arr_feat = data[feature_columns].to_numpy()
-    arr_label = data[label_column].to_numpy()
-    n = len(data)
+    """
+    Generate sliding windows within each event group, avoiding cross-boundary mixing.
+    Yields (X_batch, y_batch).
+    """
+    for event_type, group in df.groupby(label_col):
+        arr_feat = group[feature_cols].to_numpy()
+        arr_label = group[label_col].to_numpy()
+        n = len(arr_feat)
 
-    for i in range(0, n - window_size, batch_size):
-        X_batch, y_batch = [], []
-        end = min(i + batch_size, n - window_size)
-        for j in range(i, end):
-            X_batch.append(arr_feat[j:j+window_size])
-            y_batch.append(arr_label[j+window_size])
-        yield np.array(X_batch), np.array(y_batch)
+        # Skip short sequences
+        if n <= window_size:
+            continue
+
+        for i in range(0, n - window_size, batch_size):
+            X_batch, y_batch = [], []
+            end = min(i + batch_size, n - window_size)
+            for j in range(i, end):
+                X_batch.append(arr_feat[j:j + window_size])
+                y_batch.append(arr_label[j + window_size])
+            yield np.array(X_batch), np.array(y_batch)
 
 def test_generator(df: pd.DataFrame, feature_cols: list, label_col: str) -> None:
     """Test sliding window generator."""
-    all_features = feature_cols + ['asset_id']
-    gen = sliding_window_generator(df, all_features, label_col, window_size=WINDOW_SIZE, batch_size=BATCH_SIZE_TEST)
+    gen = sliding_window_generator(df, feature_cols, label_col, window_size=WINDOW_SIZE, batch_size=BATCH_SIZE_TEST)
     X_batch, y_batch = next(gen)
     print(f"[process_data] One batch X shape: {X_batch.shape}")
     print(f"[process_data] One batch y shape: {y_batch.shape}")
@@ -83,8 +94,7 @@ def test_generator(df: pd.DataFrame, feature_cols: list, label_col: str) -> None
 def save_all_batches(df: pd.DataFrame, feature_cols: list, label_col: str, batches_dir: str) -> tuple[int, list, int]:
     """Save all sliding windows as .npy batches."""
     os.makedirs(batches_dir, exist_ok=True)
-    all_features = feature_cols + ['asset_id']
-    
+    all_features = feature_cols 
     batch_idx = 0
     total_samples = 0
     batch_shapes = []
@@ -144,13 +154,13 @@ if __name__ == "__main__":
     df_all, feature_cols = select_and_clean_features(df_all)
     
     # Test generator
-    test_generator(df_all, feature_cols, 'status_type_id')
+    test_generator(df_all, feature_cols, "event_label")
     
     # Save clean CSV
     save_clean_csv(df_all, OUTPUT_CSV)
     
     # Save batches
-    num_batches, batch_shapes, total_samples = save_all_batches(df_all, feature_cols, 'status_type_id', BATCHES_DIR)
+    num_batches, batch_shapes, total_samples = save_all_batches(df_all, feature_cols, 'event_label', BATCHES_DIR)
     
     # Split indices
     train_batches, val_batches, n_train, n_val = train_test_split(batch_shapes, total_samples, TEST_SIZE)

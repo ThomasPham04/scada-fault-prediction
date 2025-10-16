@@ -35,27 +35,19 @@ input_shape = (6, 82)
 #     Dropout(0.5),
 #     Dense(1)
 # ])
-model = keras.models.Sequential()
+model = keras.Sequential([
+    keras.layers.LSTM(64, return_sequences=True, input_shape=input_shape),
+    keras.layers.LSTM(64, return_sequences=False),
+    keras.layers.Dense(128, activation="relu"),
+    keras.layers.Dropout(0.5),
+    keras.layers.Dense(1, activation="sigmoid")
+])
 
-# First Layer
-model.add(keras.layers.LSTM(64, return_sequences=True, input_shape=(input_shape)))
-
-# Second Layer
-model.add(keras.layers.LSTM(64, return_sequences=False))
-
-# 3rd Layer (Dense)
-model.add(keras.layers.Dense(128, activation="relu"))
-
-# 4th Layer (Dropout)
-model.add(keras.layers.Dropout(0.5))
-
-# Final Output Layer
-model.add(keras.layers.Dense(1))
 
 model.compile(
-    optimizer='adam',
-    loss='binary_crossentropy',  # binary (status_type_id: 0=normal, 1=anomaly?)
-    metrics=['accuracy']
+    optimizer="adam",
+    loss="binary_crossentropy",
+    metrics=["accuracy", keras.metrics.Precision(), keras.metrics.Recall()]
 )
 
 print(f"Model input shape: {input_shape}")
@@ -77,7 +69,6 @@ print("====================Training model=========================")
 history = model.fit(
     train_gen,
     steps_per_epoch=steps_train,
-    epochs=20,
     epochs=20,
     validation_data=val_gen,
     validation_steps=steps_val,

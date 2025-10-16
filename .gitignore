@@ -6,3 +6,5 @@ tf_env/
 analyze_data.py
 *.h5
 *zip
+question_for_gpt.txt
+redo/
