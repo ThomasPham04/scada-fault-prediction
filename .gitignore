@@ -8,3 +8,13 @@ analyze_data.py
 *zip
 question_for_gpt.txt
 redo/
+read/ 
+Notebook/
+prediction_results/
+scada
+script.txt
+scada_preprocess_early_warning_sharded.py
+train_lstm_early_warning.py
+ver2.py
+output
+output_144_36_A/
