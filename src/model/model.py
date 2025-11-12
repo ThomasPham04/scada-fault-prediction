@@ -1,299 +1,418 @@
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# ====================================================================
-# SCADA Early-Warning Preprocessing (Low-RAM + Faster Vectorization) - FIXED
-# - Fixes IndexError when anomaly_starts has size 1 (or any) by avoiding
-#   out-of-bounds advanced indexing inside np.where.
-# ====================================================================
+"""
+train_lstm_early_warning_sharded.py
+
+Train an LSTM on SCADA early-warning shards produced by
+scada_preprocess_early_warning_sharded(_fast[_fix]).py.
+
+Key features
+- Reads shards via manifest.txt, uses np.load(..., mmap_mode='r') lazily.
+- No giant X.npy in RAM; per-batch loading only.QZ
+- Splits by event_id -> Train/Val/Test (70/15/15) with reproducible seed.
+- Handles extreme class imbalance with BCEWithLogitsLoss(pos_weight).
+- Reports default (0.5) metrics + best-F1 threshold and PR-AUC (numpy implementation).
+
+Usage
+python train_lstm_early_warning_sharded.py \
+  --in_dir "Dataset/processed" \
+  --epochs 8 --batch_size 256 --hidden 64 --layers 1 \
+  --lr 1e-3 --dropout 0.1 --num_workers 2 --seed 42
+"""
 
 import argparse
 import json
-import warnings
+import math
+import random
 from pathlib import Path
-from typing import List, Tuple, Set, Dict, Optional
+from typing import List, Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
-from numpy.lib.stride_tricks import sliding_window_view
+import torch
+from torch import nn
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import WeightedRandomSampler
 
-NUMERIC_PREFIXES = ["sensor_", "wind_speed_", "power_", "reactive_power_"]
+# -------------------------
+# Data utilities
+# -------------------------
 
-def read_feature_description(fd_path: Path) -> Tuple[Set[str], Set[str]]:
-    if not fd_path.exists():
-        warnings.warn(f"[WARN] feature_description.csv not found at {fd_path}; assuming no special types.")
-        return set(), set()
-    df = pd.read_csv(fd_path, sep=";")
-    df.columns = [c.replace("statistics_type", "statistic_type") for c in df.columns]
+def read_manifest(in_dir: Path) -> pd.DataFrame:
+    rows = []
+    man_path = in_dir / "manifest.txt"
+    if not man_path.exists():
+        raise FileNotFoundError(f"manifest.txt not found at {man_path}")
+    for line in man_path.read_text(encoding="utf-8").strip().splitlines():
+        if not line.strip():
+            continue
+        event_id, x_name, y_name, meta_name = line.strip().split(",")
+        rows.append({
+            "event_id": str(event_id),
+            "x_path": str((in_dir / x_name).as_posix()),
+            "y_path": str((in_dir / y_name).as_posix()),
+            "meta_path": str((in_dir / meta_name).as_posix()),
+        })
+    return pd.DataFrame(rows)
 
-    def pick_set(flag_col: str) -> Set[str]:
-        if flag_col not in df.columns:
-            return set()
-        mask = (
-            df[flag_col]
-            .astype(str).str.str
-            .isin(["true", "1", "yes"])
+def train_val_test_split_event(manifest_df: pd.DataFrame, seed: int):
+    rng = random.Random(seed)
+
+    # Đếm positives per event bằng cách đọc y_*.npy
+    evt_stats = []
+    for eid, grp in manifest_df.groupby("event_id"):
+        pos = 0
+        total = 0
+        for _, r in grp.iterrows():
+            y = np.load(r["y_path"], mmap_mode="r")
+            pos += int((y == 1).sum()); total += int(y.shape[0])
+        evt_stats.append((str(eid), pos, total))
+
+    pos_events = [e for e,p,_ in evt_stats if p > 0]
+    neg_events = [e for e,p,_ in evt_stats if p == 0]
+    rng.shuffle(pos_events); rng.shuffle(neg_events)
+
+    def split(lst, r_train=0.70, r_val=0.15):
+        n=len(lst); n_tr=max(0, int(round(r_train*n))); n_va=max(0, int(round(r_val*n)))
+        tr=lst[:n_tr]; va=lst[n_tr:n_tr+n_va]; te=lst[n_tr+n_va:]; return tr,va,te
+
+    p_tr,p_va,p_te = split(pos_events)
+    n_tr,n_va,n_te = split(neg_events)
+
+    train_e = p_tr + n_tr
+    val_e   = p_va + n_va
+    test_e  = p_te + n_te
+
+    # đảm bảo mỗi bucket có ≥1 positive nếu có thể
+    def ensure_has_pos(bucket):
+        if not any(e in pos_events for e in bucket) and len(pos_events)>0:
+            # mượn 1 pos từ bucket khác còn dôi
+            for src in (train_e, val_e, test_e):
+                if src is bucket: 
+                    continue
+                for e in list(src):
+                    if e in pos_events and (len(src) > 1):
+                        src.remove(e); bucket.append(e); return
+    ensure_has_pos(train_e); ensure_has_pos(val_e); ensure_has_pos(test_e)
+
+    # nếu bucket rỗng, mượn bớt từ bucket lớn nhất
+    for bucket in (train_e, val_e, test_e):
+        if len(bucket) == 0:
+            src = max((train_e, val_e, test_e), key=len)
+            if len(src) > 1:
+                bucket.append(src.pop())
+
+    return train_e, val_e, test_e
+
+class ShardDataset(Dataset):
+    """
+    Lazily loads shards, keeps a small cache of opened arrays.
+    index_map: list of (shard_idx, local_idx) covering only selected event_ids.
+    """
+    def __init__(self, manifest_df: pd.DataFrame, selected_events: List[str]):
+        self.mani = manifest_df.reset_index(drop=True)
+        self.sel_idx = self.mani[self.mani["event_id"].isin(selected_events)].index.tolist()
+        if len(self.sel_idx) == 0:
+            raise RuntimeError("No shards matched the selected events.")
+        # load sizes and build index map
+        self.shard_sizes = []
+        for i in self.sel_idx:
+            y = np.load(self.mani.loc[i, "y_path"], mmap_mode="r")
+            self.shard_sizes.append(int(y.shape[0]))
+        self.index_map = []
+        for s_i, shard_idx in enumerate(self.sel_idx):
+            size = self.shard_sizes[s_i]
+            self.index_map.extend([(shard_idx, j) for j in range(size)])
+        self._x_cache: Dict[int, Any] = {}
+        self._y_cache: Dict[int, Any] = {}
+
+        # infer dims from first non-empty shard
+        feat_json = self.mani["x_path"].iloc[0]
+        first_nonempty = None
+        for s_i, shard_idx in enumerate(self.sel_idx):
+            x = np.load(self.mani.loc[shard_idx, "x_path"], mmap_mode="r")
+            if x.shape[0] > 0:
+                first_nonempty = x
+                break
+        if first_nonempty is None:
+            raise RuntimeError("All selected shards are empty.")
+        self.W = first_nonempty.shape[1]
+        self.F = first_nonempty.shape[2]
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx):
+        shard_idx, j = self.index_map[idx]
+        if shard_idx not in self._x_cache:
+            self._x_cache[shard_idx] = np.load(self.mani.loc[shard_idx, "x_path"], mmap_mode="r")
+            self._y_cache[shard_idx] = np.load(self.mani.loc[shard_idx, "y_path"], mmap_mode="r")
+        X_shard = self._x_cache[shard_idx]
+        y_shard = self._y_cache[shard_idx]
+        x = np.array(X_shard[j], dtype=np.float32, copy=True)  # copy -> writable
+        y = float(y_shard[j])
+        x = torch.tensor(x, dtype=torch.float32)
+        y = torch.tensor(y, dtype=torch.float32)
+        return x, y
+
+# -------------------------
+# Model
+# -------------------------
+
+class LSTMBinary(nn.Module):
+    def __init__(self, in_features: int, hidden: int = 64, layers: int = 1, dropout: float = 0.0, bidirectional: bool=False):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=in_features,
+            hidden_size=hidden,
+            num_layers=layers,
+            batch_first=True,
+            dropout=dropout if layers > 1 else 0.0,
+            bidirectional=bidirectional,
         )
-        if "sensor_name" in df.columns:
-            return set(df.loc[mask, "sensor_name"].astype(str).str.str)
-        if {"sensor", "id"}.issubset(set(df.columns)):
-            return set((df.loc[mask, "sensor"].astype(str).str.str + "_" +
-                        df.loc[mask, "id"].astype(str).str.str))
-        return set()
+        out_dim = hidden * (2 if bidirectional else 1)
+        self.head = nn.Sequential(
+            nn.Linear(out_dim, out_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(out_dim, 1),
+        )
 
-    return pick_set("is_angle"), pick_set("is_counter")
+    def forward(self, x):  # x: (B, W, F)
+        h, _ = self.lstm(x)            # (B, W, H[*2])
+        last = h[:, -1, :]             # (B, H[*2])
+        logit = self.head(last).squeeze(-1)  # (B,)
+        return logit
 
-def infer_feature_columns(df: pd.DataFrame) -> List[str]:
-    return [c for c in df.columns if any(str(c).startswith(p) for p in NUMERIC_PREFIXES)]
+# -------------------------
+# Metrics (numpy-based)
+# -------------------------
 
-def map_angle_and_counter_columns(feature_cols: List[str],
-                                  angle_basenames: Set[str],
-                                  counter_basenames: Set[str]) -> Tuple[List[str], List[str]]:
-    angle_cols, counter_cols = [], []
-    for col in feature_cols:
-        parts = str(col).split("_")
-        base = "_".join(parts[:2]) if len(parts) >= 2 else parts[0]
-        if base in angle_basenames:
-            angle_cols.append(col)
-        if base in counter_basenames:
-            counter_cols.append(col)
-    return angle_cols, counter_cols
+def sigmoid_np(z: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-z))
 
-def angle_to_sin_cos(df: pd.DataFrame, angle_cols: List[str]) -> None:
-    for col in angle_cols:
-        rad = np.deg2rad(pd.to_numeric(df[col], errors="coerce").astype("float32", copy=False))
-        df[col + "_sin"] = np.sin(rad, dtype="float32")
-        df[col + "_cos"] = np.cos(rad, dtype="float32")
-    df.drop(columns=angle_cols, inplace=True)
+def precision_recall_f1(y_true: np.ndarray, y_pred: np.ndarray) -> Tuple[float, float, float]:
+    tp = float(((y_true == 1) & (y_pred == 1)).sum())
+    fp = float(((y_true == 0) & (y_pred == 1)).sum())
+    fn = float(((y_true == 1) & (y_pred == 0)).sum())
+    prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1   = 2*prec*rec/(prec+rec) if (prec+rec) > 0 else 0.0
+    return prec, rec, f1
 
-def counters_to_rates(df: pd.DataFrame, counter_cols: List[str]) -> None:
-    for col in counter_cols:
-        s = pd.to_numeric(df[col], errors="coerce").astype("float32", copy=False)
-        diff = s.diff().clip(lower=0).fillna(0.0).astype("float32", copy=False)
-        df[col + "_rate"] = diff
-    df.drop(columns=counter_cols, inplace=True)
+def pr_auc_from_scores(y_true: np.ndarray, scores: np.ndarray, num_thresh: int = 200) -> float:
+    # approximate PR-AUC by scanning thresholds over score range
+    if scores.size == 0:
+        return 0.0
+    smin, smax = float(scores.min()), float(scores.max())
+    if smin == smax:
+        # constant scores -> degenerate curve
+        y_pred = (scores >= 0.0).astype(int)
+        p, r, _ = precision_recall_f1(y_true, y_pred)
+        return p * r
+    ths = np.linspace(smin, smax, num_thresh)
+    precs, recs = [], []
+    for t in ths:
+        y_pred = (scores >= t).astype(int)
+        p, r, _ = precision_recall_f1(y_true, y_pred)
+        precs.append(p); recs.append(r)
+    # sort by recall and integrate
+    recs = np.array(recs)
+    precs = np.array(precs)
+    order = np.argsort(recs)
+    recs, precs = recs[order], precs[order]
+    # Riemann sum
+    auc = 0.0
+    for i in range(1, len(recs)):
+        auc += (recs[i] - recs[i-1]) * precs[i]
+    return float(auc)
 
-def standardize_inplace(df: pd.DataFrame, feature_cols: List[str],
-                        train_mask: Optional[np.ndarray]) -> Dict[str, Dict[str, float]]:
-    stats: Dict[str, Dict[str, float]] = {}
-    ref = df[feature_cols] if train_mask is None or len(train_mask) != len(df) else df.loc[train_mask, feature_cols]
-    means = ref.mean().astype("float64")
-    stds = ref.std(ddof=0).replace(0, np.nan).astype("float64").fillna(1.0)
-    fvals = df[feature_cols].astype("float32", copy=False)
-    for c in feature_cols:
-        f32 = (fvals[c].astype("float64") - means[c]) / stds[c]
-        df[c] = f32.astype("float32", copy=False)
-        stats[c] = {"mean": float(means[c]), "std": float(stds[c])}
-    return stats
+# -------------------------
+# Training
+# -------------------------
 
-def guess_usecols(csv_path: Path) -> Optional[List[str]]:
-    try:
-        head = pd.read_csv(csv_path, sep=";", nrows=0)
-    except Exception:
-        return None
-    cols = [c for c in head.columns]
-    usecols = []
-    for c in cols:
-        cs = c
-        if cs in {"time_stamp", "time", "timestamp", "date", "datetime", "status_type", "train_test"}:
-            usecols.append(c)
-        elif any(cs.startswith(p) for p in NUMERIC_PREFIXES):
-            usecols.append(c)
-    return usecols or None
+def seed_everything(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
-def normalize_time_column(df: pd.DataFrame) -> None:
-    df.columns = [c for c in df.columns]
-    if "time_stamp" in df.columns:
-        df["time_stamp"] = pd.to_datetime(df["time_stamp"])
-        return
-    for cand in ["time", "timestamp", "date", "datetime"]:
-        if cand in df.columns:
-            df.rename(columns={cand: "time_stamp"}, inplace=True)
-            df["time_stamp"] = pd.to_datetime(df["time_stamp"])
-            return
-    raise ValueError("[ERR] No time column found (time_stamp/time/timestamp/date/datetime).")
+def compute_pos_weight(ds: ShardDataset) -> float:
+    # scan y lazily
+    pos = 0
+    total = 0
+    seen = set()
+    for shard_idx in ds.sel_idx:
+        if shard_idx in seen:
+            continue
+        y = np.load(ds.mani.loc[shard_idx, "y_path"], mmap_mode="r")
+        pos += int((y == 1).sum())
+        total += int(y.shape[0])
+        seen.add(shard_idx)
+    neg = max(1, total - pos)
+    pos = max(1, pos)
+    return float(neg / pos)
 
-def discover_train_mask(df: pd.DataFrame) -> Optional[np.ndarray]:
-    if "train_test" in df.columns:
-        return df["train_test"].astype(str).str.eq("train").to_numpy()
-    return None
+def run_epoch(model, loader, device, criterion, optimizer=None, grad_clip: float = 1.0):
+    model.train(mode=optimizer is not None)
+    total_loss = 0.0
+    all_logits = []
+    all_targets = []
+    for x, y in loader:
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+        logits = model(x)
+        loss = criterion(logits, y)
+        if optimizer is not None:
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            if grad_clip is not None:
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+        total_loss += float(loss.detach().cpu().item()) * x.size(0)
+        all_logits.append(logits.detach().cpu().numpy())
+        all_targets.append(y.detach().cpu().numpy())
+    logits = np.concatenate(all_logits, axis=0) if all_logits else np.array([])
+    targets = np.concatenate(all_targets, axis=0) if all_targets else np.array([])
+    return total_loss / max(1, len(loader.dataset)), logits, targets
 
-def build_windows_vectorized(df: pd.DataFrame,
-                             feature_cols: List[str],
-                             window: int,
-                             stride: int,
-                             anomaly_starts: np.ndarray,
-                             horizon_minutes: int):
-    T = len(df)
-    if T < window:
-        return np.zeros((0, window, len(feature_cols)), np.float32), np.zeros((0,), np.int8), pd.DataFrame([])
+def evaluate_from_logits(logits: np.ndarray, targets: np.ndarray) -> Dict[str, float]:
+    scores = sigmoid_np(logits)
+    y_hat = (scores >= 0.5).astype(int)
+    p, r, f1 = precision_recall_f1(targets.astype(int), y_hat)
+    # best-F1 search on 200 thresholds between 0 and 1
+    ths = np.linspace(0.0, 1.0, 200)
+    best = (0.0, 0.0, 0.0, 0.5)  # f1, p, r, t
+    for t in ths:
+        yb = (scores >= t).astype(int)
+        pb, rb, f1b = precision_recall_f1(targets.astype(int), yb)
+        if f1b > best[0]:
+            best = (f1b, pb, rb, t)
+    pr_auc = pr_auc_from_scores(targets.astype(int), scores, num_thresh=200)
+    return {
+        "precision": float(p), "recall": float(r), "f1": float(f1), "pr_auc": float(pr_auc),
+        "best_f1": float(best[0]), "best_p": float(best[1]), "best_r": float(best[2]), "best_t": float(best[3])
+    }
 
-    times = pd.to_datetime(df["time_stamp"]).to_numpy('datetime64[ns]')
-    A = df[feature_cols].to_numpy(dtype="float32", copy=False)
-
-    valid_rows = ~np.isnan(A).any(axis=1)
-    valid_win = sliding_window_view(valid_rows, window_shape=window, axis=0).all(axis=1)
-    X_view = sliding_window_view(A, window_shape=window, axis=0)  # (T-W+1, W, F)
-
-    # stride sampling
-    Xv = X_view[::stride]
-    valid_v = valid_win[::stride]
-    end_times = times[window-1::stride]
-
-    # keep only valid windows (no NaNs)
-    Xv = Xv[valid_v]
-    end_times = end_times[valid_v]
-
-    # ----- FIXED LABELING (avoid out-of-bounds) -----
-    if anomaly_starts.size == 0:
-        y = np.zeros((len(end_times),), dtype=np.int8)
-    else:
-        anomaly_starts = np.sort(anomaly_starts)  # ensure sorted
-        idx = np.searchsorted(anomaly_starts, end_times, side="right")
-        in_bounds = idx < anomaly_starts.size
-
-        next_anom = np.full(end_times.shape, np.datetime64('NaT'), dtype='datetime64[ns]')
-        # assign only where valid to avoid OOB
-        next_anom[in_bounds] = anomaly_starts[idx[in_bounds]]
-
-        # horizon in minutes
-        y = (in_bounds & ((next_anom - end_times) <= np.timedelta64(horizon_minutes, 'm'))).astype(np.int8)
-
-    meta_df = pd.DataFrame({
-        "end_time": end_times.astype('datetime64[ns]').astype('datetime64[ms]').astype(str),
-        "label": y.astype(int)
-    })
-
-    X = np.ascontiguousarray(Xv)
-    return X, y, meta_df
-
+def build_weighted_sampler(ds: Dataset, pos_mult: float = 10.0):
+    # gán weight cao hơn cho các sample dương tính
+    weights = np.zeros(len(ds), dtype=np.float32)
+    for i, (shard_idx, j) in enumerate(ds.index_map):  # index_map đã có trong ShardDataset
+        if shard_idx not in ds._y_cache:
+            ds._y_cache[shard_idx] = np.load(ds.mani.loc[shard_idx, "y_path"], mmap_mode="r")
+        y = ds._y_cache[shard_idx][j]
+        weights[i] = pos_mult if y == 1 else 1.0
+    sampler = WeightedRandomSampler(weights=torch.from_numpy(weights), num_samples=len(ds), replacement=True)
+    return sampler
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--farm_dir", type=str, required=True)
-    ap.add_argument("--out_dir", type=str, required=True)
-    ap.add_argument("--window", type=int, default=144)
-    ap.add_argument("--horizon", type=int, default=36)  # horizon measured in 10-minute steps in raw problem
-    ap.add_argument("--stride", type=int, default=3)
-    ap.add_argument("--use_status", action="store_true")
-    ap.add_argument("--no_save_scaler", action="store_true")
+    ap.add_argument("--in_dir", type=str, required=True)
+    ap.add_argument("--epochs", type=int, default=8)
+    ap.add_argument("--batch_size", type=int, default=256)
+    ap.add_argument("--hidden", type=int, default=64)
+    ap.add_argument("--layers", type=int, default=1)
+    ap.add_argument("--dropout", type=float, default=0.1)
+    ap.add_argument("--bidirectional", action="store_true")
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--weight_decay", type=float, default=0.0)
+    ap.add_argument("--num_workers", type=int, default=2)
+    ap.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--weighted_sampler", action="store_true",
+                help="Use WeightedRandomSampler on train to balance classes")
     args = ap.parse_args()
 
-    farm_dir = Path(args.farm_dir)
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    in_dir = Path(args.in_dir)
+    seed_everything(args.seed)
 
-    event_info_path = farm_dir / "event_info.csv"
-    ds_dir = farm_dir / "datasets"
-    feat_desc_path = farm_dir / "feature_description.csv"
+    manifest_df = read_manifest(in_dir)
+    train_e, val_e, test_e = train_val_test_split_event(manifest_df, seed=args.seed)
 
-    if not ds_dir.exists():
-        raise FileNotFoundError(f"[ERR] Datasets folder not found: {ds_dir}")
+    ds_train = ShardDataset(manifest_df, train_e)
+    if args.weighted_sampler:
+        sampler = build_weighted_sampler(ds_train, pos_mult=10.0)
+        train_loader = DataLoader(ds_train, batch_size=args.batch_size, sampler=sampler,
+                              num_workers=args.num_workers, pin_memory=True, drop_last=False)
+    else:
+        train_loader = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True,
+                              num_workers=args.num_workers, pin_memory=True, drop_last=False)
+    ds_val   = ShardDataset(manifest_df, val_e)
+    ds_test  = ShardDataset(manifest_df, test_e)
 
-    events = pd.read_csv(event_info_path, sep=";")
-    events["event_start"] = pd.to_datetime(events["event_start"])
+    train_loader = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True,
+                              num_workers=args.num_workers, pin_memory=True, drop_last=False)
+    val_loader   = DataLoader(ds_val,   batch_size=args.batch_size, shuffle=False,
+                              num_workers=args.num_workers, pin_memory=True, drop_last=False)
+    test_loader  = DataLoader(ds_test,  batch_size=args.batch_size, shuffle=False,
+                              num_workers=args.num_workers, pin_memory=True, drop_last=False)
 
-    angle_bases, counter_bases = read_feature_description(feat_desc_path)
+    model = LSTMBinary(in_features=ds_train.F, hidden=args.hidden, layers=args.layers,
+                       dropout=args.dropout, bidirectional=args.bidirectional).to(args.device)
 
-    manifest_lines = []
-    meta_global_path = out_dir / "meta_windows.csv"
-    meta_written = False
-    scaler_all: Dict[str, Dict[str, Dict[str, float]]] = {}
-    feature_names_final: Optional[List[str]] = None
+    # pos_weight to address imbalance
+    pos_weight_val = compute_pos_weight(ds_train)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight_val, device=args.device))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    for _, row in events.iterrows():
-        event_id = str(row["event_id"])
-        label_str = str(row["event_label"])
-        event_start = pd.to_datetime(row["event_start"])
+    best_val_f1 = 0.0
+    best_state = None
 
-        csv_path = ds_dir / f"{event_id}.csv"
-        if not csv_path.exists():
-            print(f"[WARN] Missing CSV for event {event_id}: {csv_path}; skipping.")
-            continue
+    for epoch in range(1, args.epochs + 1):
+        tr_loss, tr_logits, tr_targets = run_epoch(model, train_loader, args.device, criterion, optimizer)
+        val_loss, val_logits, val_targets = run_epoch(model, val_loader, args.device, criterion, optimizer=None)
 
-        usecols = guess_usecols(csv_path)
-        try:
-            df = pd.read_csv(csv_path, sep=";", usecols=usecols)
-        except Exception:
-            df = pd.read_csv(csv_path, sep=";")
+        tr_metrics = evaluate_from_logits(tr_logits, tr_targets)
+        va_metrics = evaluate_from_logits(val_logits, val_targets)
 
-        normalize_time_column(df)
-        df.sort_values("time_stamp", inplace=True, kind="mergesort")
-        df.reset_index(drop=True, inplace=True)
+        if va_metrics["best_f1"] > best_val_f1:
+            best_val_f1 = va_metrics["best_f1"]
+            best_state = {k: v.cpu() if hasattr(v, "is_cuda") else v for k, v in model.state_dict().items()}
 
-        feature_cols = infer_feature_columns(df)
+        print(f"[Epoch {epoch:02d}] "
+              f"train_loss={tr_loss:.4f} F1={tr_metrics['f1']:.4f} "
+              f"val_loss={val_loss:.4f} F1={va_metrics['f1']:.4f} bestF1={va_metrics['best_f1']:.4f} "
+              f"p={va_metrics['precision']:.4f} r={va_metrics['recall']:.4f} prAUC={va_metrics['pr_auc']:.4f}")
 
-        if args.use_status and "status_type" in df.columns:
-            dummies = pd.get_dummies(df["status_type"].astype("category"), prefix="status")
-            df = pd.concat([df, dummies], axis=1)
-            feature_cols += list(dummies.columns)
+    # Evaluate on test with best checkpoint
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
-        angle_cols, counter_cols = map_angle_and_counter_columns(feature_cols, angle_bases, counter_bases)
-        if angle_cols:
-            angle_to_sin_cos(df, angle_cols)
-            feature_cols = [c for c in feature_cols if c not in angle_cols] + \
-                           [c + "_sin" for c in angle_cols] + [c + "_cos" for c in angle_cols]
-        if counter_cols:
-            counters_to_rates(df, counter_cols)
-            feature_cols = [c for c in feature_cols if c not in counter_cols] + \
-                           [c + "_rate" for c in counter_cols]
+    te_loss, te_logits, te_targets = run_epoch(model, test_loader, args.device, criterion, optimizer=None)
+    te_metrics = evaluate_from_logits(te_logits, te_targets)
 
-        for c in feature_cols:
-            df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32", copy=False)
-
-        df.set_index("time_stamp", inplace=True)
-        df[feature_cols] = df[feature_cols].interpolate(method="time", limit_direction="both")
-        df.reset_index(inplace=True)
-
-        train_mask = discover_train_mask(df)
-        stats = standardize_inplace(df, feature_cols, train_mask)
-        if not args.no_save_scaler:
-            scaler_all[event_id] = stats
-
-        # horizon is specified in 10-minute steps -> convert to minutes
-        horizon_minutes = int(args.horizon) * 10
-
-        anomaly_starts = np.array(
-            [np.datetime64(event_start)] if label_str in {"anomaly", "fault", "1", "true"} else [],
-            dtype='datetime64[ns]'
-        )
-
-        X, y, meta_df = build_windows_vectorized(
-            df, feature_cols, window=args.window, stride=args.stride,
-            anomaly_starts=anomaly_starts, horizon_minutes=horizon_minutes
-        )
-
-        X_path = out_dir / f"X_{event_id}.npy"
-        y_path = out_dir / f"y_{event_id}.npy"
-        meta_path = out_dir / f"meta_{event_id}.csv"
-
-        np.save(X_path, X)
-        np.save(y_path, y.astype("int8", copy=False))
-        meta_df.to_csv(meta_path, index=False)
-
-        meta_df.assign(event_id=event_id).to_csv(
-            meta_global_path, mode="a", header=not meta_written, index=False
-        )
-        meta_written = True
-
-        manifest_lines.append(f"{event_id},{X_path.name},{y_path.name},{meta_path.name}")
-
-        if feature_names_final is None and X.shape[0] > 0:
-            feature_names_final = list(feature_cols)
-
-        print(f"[OK] Event {event_id}: {X.shape[0]} windows; +{int(y.sum())} positives.")
-
-    (out_dir / "manifest.txt").write_text("\n".join(manifest_lines), encoding="utf-8")
-    with open(out_dir / "feature_names.json", "w", encoding="utf-8") as fjs:
-        json.dump(feature_names_final or [], fjs, ensure_ascii=False, indent=2)
-    if not args.no_save_scaler:
-        with open(out_dir / "scaler_stats.json", "w", encoding="utf-8") as fjs:
-            json.dump(scaler_all, fjs, ensure_ascii=False, indent=2)
-
-    print("\n=== DONE (Fast, Fixed) ===")
-    print(f"Output dir: {out_dir}")
-    print("Artifacts per event: X_<id>.npy, y_<id>.npy, meta_<id>.csv")
-    print("Global artifacts: manifest.txt, meta_windows.csv, feature_names.json" +
-          (", scaler_stats.json" if not args.no_save_scaler else ""))
+    # Save metrics & model
+    out = {
+        "val_best_f1": float(best_val_f1),
+        "test_default": {
+            "precision": float(te_metrics["precision"]),
+            "recall": float(te_metrics["recall"]),
+            "f1": float(te_metrics["f1"]),
+            "pr_auc": float(te_metrics["pr_auc"]),
+        },
+        "test_best_f1": {
+            "threshold": float(te_metrics["best_t"]),
+            "precision": float(te_metrics["best_p"]),
+            "recall": float(te_metrics["best_r"]),
+            "f1": float(te_metrics["best_f1"]),
+        },
+        "split": {
+            "train_events": train_e,
+            "val_events": val_e,
+            "test_events": test_e
+        },
+        "model": {
+            "in_features": ds_train.F, "window": ds_train.W,
+            "hidden": args.hidden, "layers": args.layers,
+            "dropout": args.dropout, "bidirectional": args.bidirectional
+        },
+        "loss": {"pos_weight": float(pos_weight_val)}
+    }
+    with open(in_dir / "lstm_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2)
+    torch.save(model.state_dict(), in_dir / "lstm_early_warning.pt")
+    print("\nSaved metrics to", (in_dir / "lstm_metrics.json"))
+    print("Saved model weights to", (in_dir / "lstm_early_warning.pt"))
 
 if __name__ == "__main__":
     main()
