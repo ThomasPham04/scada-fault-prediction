@@ -29,16 +29,12 @@ def read_feature_description(fd_path: Path) -> Tuple[Set[str], Set[str]]:
     def pick_set(flag_col: str) -> Set[str]:
         if flag_col not in df.columns:
             return set()
-        mask = (
-            df[flag_col]
-            .astype(str).str.str
-            .isin(["true", "1", "yes"])
-        )
+        mask = df[flag_col].astype(str).str.lower().isin(["true", "1", "yes"])
         if "sensor_name" in df.columns:
-            return set(df.loc[mask, "sensor_name"].astype(str).str.str)
+            return set(df.loc[mask, "sensor_name"].astype(str).str.lower())
         if {"sensor", "id"}.issubset(set(df.columns)):
-            return set((df.loc[mask, "sensor"].astype(str).str.str + "_" +
-                        df.loc[mask, "id"].astype(str).str.str))
+            return set((df.loc[mask, "sensor"].astype(str).str.lower() + "_" +
+                        df.loc[mask, "id"].astype(str).str.lower()))
         return set()
 
     return pick_set("is_angle"), pick_set("is_counter")
@@ -115,7 +111,7 @@ def normalize_time_column(df: pd.DataFrame) -> None:
 
 def discover_train_mask(df: pd.DataFrame) -> Optional[np.ndarray]:
     if "train_test" in df.columns:
-        return df["train_test"].astype(str).str.eq("train").to_numpy()
+        return df["train_test"].astype(str).eq("train").to_numpy()
     return None
 
 def build_windows_vectorized(df: pd.DataFrame,
@@ -123,13 +119,20 @@ def build_windows_vectorized(df: pd.DataFrame,
                              window: int,
                              stride: int,
                              anomaly_starts: np.ndarray,
-                             horizon_minutes: int):
+                             horizon_minutes: int,
+                             selected_features: List[str] = None):
+    if selected_features is not None:
+        use_cols = [c for c in feature_cols if c in selected_features]
+    else : 
+        use_cols = feature_cols
+    
     T = len(df)
     if T < window:
-        return np.zeros((0, window, len(feature_cols)), np.float32), np.zeros((0,), np.int8), pd.DataFrame([])
+        return np.zeros((0, window, len(use_cols)), np.float32), \
+               np.zeros((0,), np.int8), pd.DataFrame([])
 
     times = pd.to_datetime(df["time_stamp"]).to_numpy('datetime64[ns]')
-    A = df[feature_cols].to_numpy(dtype="float32", copy=False)
+    A = df[use_cols].to_numpy(dtype="float32", copy=False)
 
     valid_rows = ~np.isnan(A).any(axis=1)
     valid_win = sliding_window_view(valid_rows, window_shape=window, axis=0).all(axis=1)
@@ -167,16 +170,128 @@ def build_windows_vectorized(df: pd.DataFrame,
     X = np.ascontiguousarray(Xv)
     return X, y, meta_df
 
+def upsample_anomalies(X: np.ndarray, y: np.ndarray, factor: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Upsample anomaly windows by the given factor.
+
+    Args:
+        X (np.ndarray): feature windows
+        y (np.ndarray): labels
+        factor (int): upsampling factor
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: upsampled X and y
+    """
+    if factor <= 1:
+        return X, y
+    anomaly_indices = np.where(y == 1)[0]
+    if len(anomaly_indices) == 0:
+        return X, y
+    X_anom = X[anomaly_indices]
+    y_anom = y[anomaly_indices]
+    X_upsampled = np.repeat(X_anom, factor, axis=0)
+    y_upsampled = np.repeat(y_anom, factor, axis=0)
+    X_new = np.concatenate([X, X_upsampled], axis=0)
+    y_new = np.concatenate([y, y_upsampled], axis=0)
+    return X_new, y_new
+
+def print_label_distribution(y, name="y"):
+    labels, counts = np.unique(y, return_counts=True)
+    total = len(y)
+    print(f"Label distribution for {name}:")
+    for lbl, cnt in zip(labels, counts):
+        print(f"  Label {lbl}: {cnt} ({cnt/total*100:.2f}%)")
+    print(f"  Total: {total}\n")
+
+
+def compute_point_biserial(X_all: np.ndarray, y_all: np.ndarray, K_top: int) -> pd.DataFrame:
+        
+        print("[PASS 1] Computing global only...")
+        
+        X_all = np.concatenate(all_X, axis=0)
+        y_all = np.concatenate(all_y, axis=0)
+        X_bal, y_bal = upsample_anomalies(X_all, y_all, factor=2768)
+        
+        # Before upsample
+        print_label_distribution(y_all, name="y_all (before upsample)")
+
+        # After upsample
+        print_label_distribution(y_bal, name="y_bal (after upsample)")
+        
+        from scipy.stats import pointbiserialr
+        
+        n_features = X_bal.shape[1]
+        corr_list = []
+
+        for i in range(n_features):
+            feat_values = X_bal[:, i, :].mean(axis=1)
+
+            corr, pval = pointbiserialr(feat_values, y_bal)
+
+            if corr is None:
+                corr = 0.0
+
+            corr_list.append((feature_cols[i], corr, pval))
+
+        df_corr_global = pd.DataFrame(corr_list, columns=["feature", "corr", "pval"])
+
+        # replace NaN by 0
+        df_corr_global["corr"] = df_corr_global["corr"].fillna(0)
+
+        # sort by |corr|
+        df_corr_global = df_corr_global.sort_values(
+            "corr", key=lambda x: x.abs(), ascending=False
+        )
+        # K = 50
+        top_features = df_corr_global["feature"].head(K_top).tolist()
+        with open(out_dir /"selected_features.json", "w", encoding="utf-8") as fjs:
+            json.dump(top_features, fjs, ensure_ascii=False, indent=2)
+
+        print(f"[PASS 1 DONE] Top {K_top} features saved to selected_features.json")
+        # --- EXPORT FILE CSV ---
+        df_corr_global.to_csv("corr_global.csv", index=False)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--farm_dir", type=str, required=True)
     ap.add_argument("--out_dir", type=str, required=True)
-    ap.add_argument("--window", type=int, default=144)
+    ap.add_argument("--window", type=int, default=6)
     ap.add_argument("--horizon", type=int, default=36)  # horizon measured in 10-minute steps in raw problem
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--use_status", action="store_true")
     ap.add_argument("--no_save_scaler", action="store_true")
+    ap.add_argument("--compute_corr_only", action="store_true", help="Run pass 1: Compute correlation only")
+    ap.add_argument("--use_selected_features", type=str, default=None, help="Run pass 2: Only use selected features from JSON file")
     args = ap.parse_args()
+    # args = argparse.Namespace(
+    #     farm_dir="Dataset/Wind_Farm_A", 
+    #     out_dir="output",  
+    #     window=6,
+    #     horizon=36,
+    #     stride=3,
+    #     use_status=False,
+    #     no_save_scaler=False,
+    #     compute_corr_only=False,   # <= bật pass 1
+    #     use_selected_features=None
+    # )
+
+    
+    # args = ap.parse_args()
+    
+    selected_features = None
+    if args.use_selected_features is not None:
+        # Nếu user đưa tên file → load trong out_dir
+        tentative_path = Path(args.use_selected_features)
+
+        if tentative_path.is_file():
+            json_path = tentative_path
+        else:
+            json_path = out_dir / args.use_selected_features   # mặc định load từ out_dir
+
+        with open(json_path, "r", encoding="utf-8") as fjs:
+            selected_features = json.load(fjs)
+
+        print(f"[INFO] Using {len(selected_features)} selected features from {json_path}")
+
+    
 
     farm_dir = Path(args.farm_dir)
     out_dir = Path(args.out_dir)
@@ -199,6 +314,9 @@ def main():
     meta_written = False
     scaler_all: Dict[str, Dict[str, Dict[str, float]]] = {}
     feature_names_final: Optional[List[str]] = None
+    
+    all_X = []
+    all_y = []
 
     for _, row in events.iterrows():
         event_id = str(row["event_id"])
@@ -258,9 +376,22 @@ def main():
         )
 
         X, y, meta_df = build_windows_vectorized(
-            df, feature_cols, window=args.window, stride=args.stride,
-            anomaly_starts=anomaly_starts, horizon_minutes=horizon_minutes
+            df, feature_cols, window=args.window, 
+            stride=args.stride,
+            anomaly_starts=anomaly_starts, 
+            horizon_minutes=horizon_minutes, 
+            selected_features=selected_features
         )
+        if X.shape[0] > 0 and args.compute_corr_only:
+            print("==============================================")
+            print(f"Event {event_id}:")
+            print(f"  X shape = {X.shape}")   # (num_windows, window_size, num_features)
+            print(f"  y shape = {y.shape}")
+            print(f"  Number of windows = {X.shape[0]}")
+            print(f"  Window size = {X.shape[1]}")
+            print(f"  Num features = {X.shape[2]}")
+            all_X.append(X)
+            all_y.append(y)
 
         X_path = out_dir / f"X_{event_id}.npy"
         y_path = out_dir / f"y_{event_id}.npy"
@@ -288,7 +419,9 @@ def main():
     if not args.no_save_scaler:
         with open(out_dir / "scaler_stats.json", "w", encoding="utf-8") as fjs:
             json.dump(scaler_all, fjs, ensure_ascii=False, indent=2)
-
+    if args.compute_corr_only:
+        compute_point_biserial(X_all=all_X, y_all=all_y, K_top=50)
+    exit(0)
     print("\n=== DONE (Fast, Fixed) ===")
     print(f"Output dir: {out_dir}")
     print("Artifacts per event: X_<id>.npy, y_<id>.npy, meta_<id>.csv")
