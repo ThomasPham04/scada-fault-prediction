@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "cppdbg",
+      "request": "launch",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "cwd": "c:/Users/Admin/AppData/Local/Temp/b6579dac-9c35-4ce5-a5e6-819bfc804e02_iperf-3-current.tar.gz.e02/iperf-3.19/src",
+      "program": "c:/Users/Admin/AppData/Local/Temp/b6579dac-9c35-4ce5-a5e6-819bfc804e02_iperf-3-current.tar.gz.e02/iperf-3.19/src/build/Debug/outDebug",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

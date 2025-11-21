@@ -203,52 +203,62 @@ def print_label_distribution(y, name="y"):
     print(f"  Total: {total}\n")
 
 
-def compute_point_biserial(X_all: np.ndarray, y_all: np.ndarray, K_top: int) -> pd.DataFrame:
-        
-        print("[PASS 1] Computing global only...")
-        
-        X_all = np.concatenate(all_X, axis=0)
-        y_all = np.concatenate(all_y, axis=0)
-        X_bal, y_bal = upsample_anomalies(X_all, y_all, factor=2768)
-        
-        # Before upsample
-        print_label_distribution(y_all, name="y_all (before upsample)")
+def compute_point_biserial(X_all: np.ndarray, y_all: np.ndarray, K_top: int, feature_cols: List[str]) -> pd.DataFrame:
+    """Compute the point biserial correlation
 
-        # After upsample
-        print_label_distribution(y_bal, name="y_bal (after upsample)")
-        
-        from scipy.stats import pointbiserialr
-        
-        n_features = X_bal.shape[1]
-        corr_list = []
+    Args:
+        X_all (np.ndarray): Feature df
+        y_all (np.ndarray): Labels
+        K_top (int): Number of top features to select
+        feature_cols (List[str]): Feature column names
 
-        for i in range(n_features):
-            feat_values = X_bal[:, i, :].mean(axis=1)
+    Returns:
+        pd.DataFrame: DataFrame of top K features with highest absolute correlation
+    """
+    print("[PASS 1] Computing global only...")
+    
+    X_all = np.concatenate(X_all, axis=0)
+    y_all = np.concatenate(y_all, axis=0)
+    X_bal, y_bal = upsample_anomalies(X_all, y_all, factor=2768)
+    
+    # Before upsample
+    print_label_distribution(y_all, name="y_all (before upsample)")
 
-            corr, pval = pointbiserialr(feat_values, y_bal)
+    # After upsample
+    print_label_distribution(y_bal, name="y_bal (after upsample)")
+    
+    from scipy.stats import pointbiserialr
+    
+    n_features = X_bal.shape[1]
+    corr_list = []
 
-            if corr is None:
-                corr = 0.0
+    for i in range(n_features):
+        feat_values = X_bal[:, i, :].mean(axis=1)
 
-            corr_list.append((feature_cols[i], corr, pval))
+        corr, pval = pointbiserialr(feat_values, y_bal)
 
-        df_corr_global = pd.DataFrame(corr_list, columns=["feature", "corr", "pval"])
+        if corr is None:
+            corr = 0.0
 
-        # replace NaN by 0
-        df_corr_global["corr"] = df_corr_global["corr"].fillna(0)
+        corr_list.append((feature_cols[i], corr, pval))
 
-        # sort by |corr|
-        df_corr_global = df_corr_global.sort_values(
-            "corr", key=lambda x: x.abs(), ascending=False
-        )
-        # K = 50
-        top_features = df_corr_global["feature"].head(K_top).tolist()
-        with open(out_dir /"selected_features.json", "w", encoding="utf-8") as fjs:
-            json.dump(top_features, fjs, ensure_ascii=False, indent=2)
+    df_corr_global = pd.DataFrame(corr_list, columns=["feature", "corr", "pval"])
 
-        print(f"[PASS 1 DONE] Top {K_top} features saved to selected_features.json")
-        # --- EXPORT FILE CSV ---
-        df_corr_global.to_csv("corr_global.csv", index=False)
+    # replace NaN by 0
+    df_corr_global["corr"] = df_corr_global["corr"].fillna(0)
+
+    # sort by |corr|
+    df_corr_global = df_corr_global.sort_values(
+        "corr", key=lambda x: x.abs(), ascending=False
+    )
+    
+    # --- EXPORT FILE CSV ---
+    df_corr_global.to_csv("corr_global.csv", index=False)
+    
+    # K = 50
+    top_features = df_corr_global["feature"].head(K_top).tolist()
+    
+    return top_features
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--farm_dir", type=str, required=True)
@@ -290,8 +300,6 @@ def main():
             selected_features = json.load(fjs)
 
         print(f"[INFO] Using {len(selected_features)} selected features from {json_path}")
-
-    
 
     farm_dir = Path(args.farm_dir)
     out_dir = Path(args.out_dir)
@@ -420,8 +428,12 @@ def main():
         with open(out_dir / "scaler_stats.json", "w", encoding="utf-8") as fjs:
             json.dump(scaler_all, fjs, ensure_ascii=False, indent=2)
     if args.compute_corr_only:
-        compute_point_biserial(X_all=all_X, y_all=all_y, K_top=50)
-    exit(0)
+        top_features = compute_point_biserial(X_all=all_X, y_all=all_y, K_top=88, feature_cols=feature_cols)
+        with open(out_dir /"selected_features.json", "w", encoding="utf-8") as fjs:
+            json.dump(top_features, fjs, ensure_ascii=False, indent=2)
+            
+        print(f"[PASS 1 DONE] Top features saved to selected_features.json")
+        exit(0)
     print("\n=== DONE (Fast, Fixed) ===")
     print(f"Output dir: {out_dir}")
     print("Artifacts per event: X_<id>.npy, y_<id>.npy, meta_<id>.csv")
