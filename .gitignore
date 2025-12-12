@@ -18,3 +18,4 @@ train_lstm_early_warning.py
 ver2.py
 output*
 *.ipynb
+.cursor/

@@ -5,13 +5,11 @@ train_lstm_early_warning_sharded.py  (FAST VERSION)
 
 - Train LSTM trên các shard SCADA early-warning (manifest.txt).
 - Memory-friendly (mmap), event-based split.
-- Hỗ trợ WeightedRandomSampler + pos_weight.
+- WeightedRandomSampler + pos_weight.
 - Val/Test có PR-AUC + best-F1; Train chỉ log loss (nhanh hơn nhiều).
 
 Usage
-python train_lstm_early_warning_sharded.py \
-  --in_dir "Dataset/processed" \
-  --epochs 8 --batch_size 256 --hidden 64 --layers 1 \
+python train_lstm_early_warning_sharded.py --in_dir "Dataset/processed" --epochs 8 --batch_size 256 --hidden 64 --layers 1 \
   --lr 1e-3 --dropout 0.1 --num_workers 4 --seed 42 --weighted_sampler
 """
 
@@ -19,7 +17,7 @@ import argparse
 import json
 import random
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -27,6 +25,7 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torch.amp import GradScaler, autocast
+from tqdm.auto import tqdm
 
 
 # -------------------------
@@ -51,56 +50,89 @@ def read_manifest(in_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def train_val_test_split_event(manifest_df: pd.DataFrame, seed: int):
+def train_val_test_split_event(manifest_df: pd.DataFrame, seed: int,
+                               ratios: Tuple[float, float, float] = (0.70, 0.15, 0.15)):
     rng = random.Random(seed)
+    if len(ratios) != 3:
+        raise ValueError("ratios must have exactly 3 values (train/val/test).")
+    ratio_sum = sum(ratios)
+    if ratio_sum <= 0:
+        raise ValueError("Sum of ratios must be positive.")
+    ratios = tuple(max(r, 0.0) / ratio_sum for r in ratios)
 
-    # Đếm positives per event bằng cách đọc y_*.npy
+    # Đếm positives per event
     evt_stats = []
     for eid, grp in manifest_df.groupby("event_id"):
         pos = 0
         total = 0
         for _, r in grp.iterrows():
-            y = np.load(r["y_path"], mmap_mode="r")
+            y = load_array(r["y_path"], mmap_mode="r")
             pos += int((y == 1).sum())
             total += int(y.shape[0])
-        evt_stats.append((str(eid), pos, total))
+        evt_stats.append({"event_id": str(eid), "positives": pos, "total": total})
 
-    pos_events = [e for e, p, _ in evt_stats if p > 0]
-    neg_events = [e for e, p, _ in evt_stats if p == 0]
-    rng.shuffle(pos_events)
-    rng.shuffle(neg_events)
+    def calc_targets(total_events: int):
+        if total_events == 0:
+            return [0, 0, 0]
+        raw = [r * total_events for r in ratios]
+        targets = [int(x) for x in raw]
+        remainder = total_events - sum(targets)
+        fracs = [x - int(x) for x in raw]
+        # phân bổ phần dư theo phần thập phân lớn nhất
+        while remainder > 0:
+            idx = max(range(len(targets)), key=lambda i: (fracs[i], -i))
+            targets[idx] += 1
+            fracs[idx] = 0.0
+            remainder -= 1
+        # đảm bảo không bucket nào 0 nếu có đủ sự kiện
+        for i in range(len(targets)):
+            if total_events >= len(targets) and targets[i] == 0:
+                donor = max(range(len(targets)), key=lambda j: targets[j])
+                if targets[donor] > 1:
+                    targets[donor] -= 1
+                    targets[i] = 1
+        return targets
 
-    def split(lst, r_train=0.70, r_val=0.15):
-        n = len(lst)
-        n_tr = max(0, int(round(r_train * n)))
-        n_va = max(0, int(round(r_val * n)))
-        tr = lst[:n_tr]
-        va = lst[n_tr:n_tr + n_va]
-        te = lst[n_tr + n_va:]
-        return tr, va, te
+    pos_stats = [s for s in evt_stats if s["positives"] > 0]
+    neg_stats = [s for s in evt_stats if s["positives"] == 0]
 
-    p_tr, p_va, p_te = split(pos_events)
-    n_tr, n_va, n_te = split(neg_events)
+    def distribute(stats_list, targets, weight_key):
+        buckets = [[] for _ in targets]
+        loads = [0.0 for _ in targets]
+        stats_list = stats_list.copy()
+        rng.shuffle(stats_list)
+        for st in stats_list:
+            available = [i for i in range(len(targets)) if targets[i] > 0 and len(buckets[i]) < targets[i]]
+            if not available:
+                available = list(range(len(targets)))
+            idx = min(available, key=lambda i: (loads[i], len(buckets[i])))
+            buckets[idx].append(st)
+            loads[idx] += weight_key(st)
+        return buckets
 
-    train_e = p_tr + n_tr
-    val_e = p_va + n_va
-    test_e = p_te + n_te
+    pos_targets = calc_targets(len(pos_stats))
+    neg_targets = calc_targets(len(neg_stats))
+
+    pos_buckets = distribute(pos_stats, pos_targets, lambda s: max(1, s["positives"]))
+    neg_buckets = distribute(neg_stats, neg_targets, lambda s: max(1, s["total"]))
 
     # đảm bảo mỗi bucket có ≥1 positive nếu có thể
-    def ensure_has_pos(bucket):
-        if not any(e in pos_events for e in bucket) and len(pos_events) > 0:
-            for src in (train_e, val_e, test_e):
-                if src is bucket:
-                    continue
-                for e in list(src):
-                    if e in pos_events and (len(src) > 1):
-                        src.remove(e)
-                        bucket.append(e)
-                        return
+    if pos_stats:
+        for i in range(len(pos_buckets)):
+            if pos_buckets[i]:
+                continue
+            donor_idx = max(range(len(pos_buckets)), key=lambda j: len(pos_buckets[j]))
+            if len(pos_buckets[donor_idx]) > 1:
+                pos_buckets[i].append(pos_buckets[donor_idx].pop())
 
-    ensure_has_pos(train_e)
-    ensure_has_pos(val_e)
-    ensure_has_pos(test_e)
+    final_buckets = []
+    for i in range(len(ratios)):
+        bucket_events = [s["event_id"] for s in pos_buckets[i]] + \
+                        [s["event_id"] for s in neg_buckets[i]]
+        rng.shuffle(bucket_events)
+        final_buckets.append(bucket_events)
+
+    train_e, val_e, test_e = final_buckets
 
     # nếu bucket rỗng, mượn bớt từ bucket lớn nhất
     for bucket in (train_e, val_e, test_e):
@@ -109,24 +141,80 @@ def train_val_test_split_event(manifest_df: pd.DataFrame, seed: int):
             if len(src) > 1:
                 bucket.append(src.pop())
 
+    # Validate that each split has enough positive samples
+    def count_positives(events: List[str]) -> int:
+        total_pos = 0
+        for eid in events:
+            for _, r in manifest_df[manifest_df["event_id"] == eid].iterrows():
+                y = load_array(r["y_path"], mmap_mode="r")
+                total_pos += int((y == 1).sum())
+        return total_pos
+
+    train_pos = count_positives(train_e)
+    val_pos = count_positives(val_e)
+    test_pos = count_positives(test_e)
+    total_pos = train_pos + val_pos + test_pos
+
+    # Minimum positive samples per split (at least 10, or 1% of total positives, whichever is larger)
+    min_pos_per_split = max(10, int(total_pos * 0.01)) if total_pos > 0 else 0
+
+    # Warn if any split has too few positives
+    if total_pos > 0:
+        splits_info = [
+            ("Train", train_e, train_pos),
+            ("Val", val_e, val_pos),
+            ("Test", test_e, test_pos)
+        ]
+        for split_name, events, pos_count in splits_info:
+            if pos_count < min_pos_per_split:
+                print(f"[WARN] {split_name} split has only {pos_count} positive samples (min recommended: {min_pos_per_split})")
+                print(f"       Events in {split_name}: {events}")
+        print(f"[INFO] Positive samples per split: Train={train_pos}, Val={val_pos}, Test={test_pos} (Total: {total_pos})")
+    
     return train_e, val_e, test_e
 
+
+def load_array(path: str, mmap_mode: str = "r"):
+    """Load numpy array from .npy or .npz file."""
+    path_obj = Path(path)
+    # If path already has .npz extension, load directly
+    if path_obj.suffix == ".npz":
+        data = np.load(str(path_obj), mmap_mode=None)  # npz doesn't support mmap
+        key = "X" if "X_" in path_obj.name else "y"
+        return data[key]
+    # Otherwise try .npz first (compressed), then .npy
+    npz_path = path_obj.with_suffix(".npz")
+    if npz_path.exists():
+        data = np.load(str(npz_path), mmap_mode=None)
+        key = "X" if "X_" in path_obj.name else "y"
+        return data[key]
+    else:
+        # Standard .npy format
+        return np.load(path, mmap_mode=mmap_mode)
 
 class ShardDataset(Dataset):
     """
     Lazily loads shards, keeps a small cache of opened arrays.
     index_map: list of (shard_idx, local_idx) covering only selected event_ids.
     """
-    def __init__(self, manifest_df: pd.DataFrame, selected_events: List[str]):
+    def __init__(self, manifest_df: pd.DataFrame, selected_events: List[str], 
+                 feature_names: Optional[List[str]] = None, selected_features: Optional[List[str]] = None):
         self.mani = manifest_df.reset_index(drop=True)
         self.sel_idx = self.mani[self.mani["event_id"].isin(selected_events)].index.tolist()
         if len(self.sel_idx) == 0:
             raise RuntimeError("No shards matched the selected events.")
 
+        # Feature selection: if selected_features provided, create feature mask
+        self.feature_mask = None
+        if selected_features is not None and feature_names is not None:
+            selected_set = set(selected_features)
+            self.feature_mask = np.array([f in selected_set for f in feature_names], dtype=bool)
+            print(f"[INFO] Using {self.feature_mask.sum()}/{len(feature_names)} selected features")
+
         # load sizes and build index map
         self.shard_sizes = []
         for i in self.sel_idx:
-            y = np.load(self.mani.loc[i, "y_path"], mmap_mode="r")
+            y = load_array(self.mani.loc[i, "y_path"], mmap_mode="r")
             self.shard_sizes.append(int(y.shape[0]))
 
         self.index_map = []
@@ -140,14 +228,109 @@ class ShardDataset(Dataset):
         # infer dims từ shard đầu tiên không rỗng
         first_nonempty = None
         for shard_idx in self.sel_idx:
-            x = np.load(self.mani.loc[shard_idx, "x_path"], mmap_mode="r")
+            x = load_array(self.mani.loc[shard_idx, "x_path"], mmap_mode="r")
             if x.shape[0] > 0:
                 first_nonempty = x
                 break
         if first_nonempty is None:
             raise RuntimeError("All selected shards are empty.")
-        self.W = first_nonempty.shape[1]
-        self.F = first_nonempty.shape[2]
+        
+        # Data shape from preprocessing: (N, W, F) where W is window size and F is num features
+        print(f"[DEBUG] First nonempty data shape: {first_nonempty.shape}")
+        
+        if len(first_nonempty.shape) != 3:
+            raise RuntimeError(f"Expected 3D array shape (N, W, F), got {first_nonempty.shape}")
+        
+        n_samples, dim1, dim2 = first_nonempty.shape
+        expected_feature_counts: List[int] = []
+        if feature_names:
+            expected_feature_counts.append(len(feature_names))
+        if selected_features:
+            expected_feature_counts.append(len(selected_features))
+        expected_feature_counts = sorted(set(expected_feature_counts))
+
+        def matches_feature_dim(dim_val: int) -> bool:
+            return any(dim_val == cnt for cnt in expected_feature_counts)
+
+        matches_dim1 = matches_feature_dim(dim1)
+        matches_dim2 = matches_feature_dim(dim2)
+
+        if matches_dim2 and not matches_dim1:
+            # Standard format: (N, W, F)
+            self.W = dim1
+            actual_num_features = dim2
+            self._needs_transpose = False
+        elif matches_dim1 and not matches_dim2:
+            # Transposed format: (N, F, W)
+            self.W = dim2
+            actual_num_features = dim1
+            self._needs_transpose = True
+            print(f"[WARN] Data appears transposed: interpreting shape {first_nonempty.shape} as (N, F, W). Will transpose during loading.")
+        elif matches_dim1 and matches_dim2:
+            # Both axes match expected feature count (rare, e.g., window size == feature count)
+            self.W = dim1
+            actual_num_features = dim2
+            self._needs_transpose = False
+            print(f"[WARN] Both axes match expected feature count(s) {expected_feature_counts}. Defaulting to (N, W, F) interpretation.")
+        else:
+            # Fallback heuristics when metadata is missing or inconsistent
+            if not expected_feature_counts:
+                print("[WARN] Could not find feature metadata to determine feature dimension. Falling back to heuristic inference.")
+            else:
+                print(
+                    "[WARN] Unable to match feature dimension from metadata "
+                    f"(expected {expected_feature_counts}, got dims {dim1} and {dim2}). "
+                    "Inferring orientation heuristically."
+                )
+
+            if dim1 == dim2:
+                self.W = dim1
+                actual_num_features = dim2
+                self._needs_transpose = False
+            elif dim1 > dim2:
+                # Assume dim1 is window (most common case when window > features)
+                self.W = dim1
+                actual_num_features = dim2
+                self._needs_transpose = False
+            else:
+                # Assume dim2 is window -> data stored as (N, F, W)
+                self.W = dim2
+                actual_num_features = dim1
+                self._needs_transpose = True
+                print(f"[WARN] Falling back to treat shape {first_nonempty.shape} as (N, F, W). Please verify preprocessing settings.")
+        
+        print(f"[INFO] Detected: window_size={self.W}, num_features={actual_num_features}, transpose={self._needs_transpose}")
+        
+        # If features were already filtered during preprocessing, disable mask
+        if self.feature_mask is not None:
+            expected_num_features = int(self.feature_mask.sum())
+            total_feature_count = len(feature_names) if feature_names is not None else None
+
+            if actual_num_features == expected_num_features:
+                # Features already filtered - no need for mask
+                print(f"[INFO] Data already has {actual_num_features} features (features were filtered during preprocessing). Disabling mask.")
+                self.feature_mask = None
+                self.F = actual_num_features
+            elif total_feature_count is not None and actual_num_features == total_feature_count:
+                # Data has all features - use mask to select
+                self.F = expected_num_features
+            else:
+                total_feat_msg = total_feature_count if total_feature_count is not None else "unknown"
+                raise RuntimeError(
+                    f"\n{'='*60}\n"
+                    f"FEATURE COUNT MISMATCH ERROR\n"
+                    f"{'='*60}\n"
+                    f"Data has: {actual_num_features} features\n"
+                    f"Selected features expects: {expected_num_features} features\n"
+                    f"All features: {total_feat_msg}\n"
+                    f"Data shape: {first_nonempty.shape}\n\n"
+                    f"SOLUTION:\n"
+                    f"  Ensure preprocessing was run with --use_selected_features when providing a selected feature list,\n"
+                    f"  or regenerate the dataset so that feature dimensions align.\n"
+                    f"{'='*60}"
+                )
+        else:
+            self.F = actual_num_features
 
     def __len__(self):
         return len(self.index_map)
@@ -155,13 +338,22 @@ class ShardDataset(Dataset):
     def __getitem__(self, idx):
         shard_idx, j = self.index_map[idx]
         if shard_idx not in self._x_cache:
-            self._x_cache[shard_idx] = np.load(self.mani.loc[shard_idx, "x_path"], mmap_mode="r")
-            self._y_cache[shard_idx] = np.load(self.mani.loc[shard_idx, "y_path"], mmap_mode="r")
+            self._x_cache[shard_idx] = load_array(self.mani.loc[shard_idx, "x_path"], mmap_mode="r")
+            self._y_cache[shard_idx] = load_array(self.mani.loc[shard_idx, "y_path"], mmap_mode="r")
         X_shard = self._x_cache[shard_idx]
         y_shard = self._y_cache[shard_idx]
 
         # tránh copy thừa: asarray + from_numpy
-        x_np = np.asarray(X_shard[j], dtype=np.float32, copy=True)
+        x_np = np.asarray(X_shard[j], dtype=np.float32, copy=True)  # (W, F) or (F, W)
+        
+        # Transpose if needed (data stored as (F, W) instead of (W, F))
+        if getattr(self, '_needs_transpose', False):
+            x_np = x_np.T  # (F, W) -> (W, F)
+        
+        # Apply feature mask if available (mask is None if features already filtered)
+        if self.feature_mask is not None:
+            x_np = x_np[:, self.feature_mask]  # (W, F_selected)
+        
         x = torch.from_numpy(x_np)        # (W, F)
         y = torch.tensor(float(y_shard[j]), dtype=torch.float32)
         return x, y
@@ -201,6 +393,7 @@ class LSTMBinary(nn.Module):
 # -------------------------
 
 def sigmoid_np(z: np.ndarray) -> np.ndarray:
+    z = np.clip(z, -20.0, 20.0, out=np.empty_like(z, dtype=np.float64))
     return 1.0 / (1.0 + np.exp(-z))
 
 
@@ -256,7 +449,7 @@ def compute_pos_weight(ds: ShardDataset) -> float:
     for shard_idx in ds.sel_idx:
         if shard_idx in seen:
             continue
-        y = np.load(ds.mani.loc[shard_idx, "y_path"], mmap_mode="r")
+        y = load_array(ds.mani.loc[shard_idx, "y_path"], mmap_mode="r")
         pos += int((y == 1).sum())
         total += int(y.shape[0])
         seen.add(shard_idx)
@@ -281,14 +474,15 @@ def run_epoch(model, loader, device, criterion, optimizer=None,
     all_logits = [] if collect_logits or not is_train else None
     all_targets = [] if collect_logits or not is_train else None
 
-    for x, y in loader:
+    loop = tqdm(loader, desc="Train" if is_train else "Eval", leave=False)
+    for batch_idx, (x, y) in enumerate(loop, 1):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
 
         if is_train:
             optimizer.zero_grad(set_to_none=True)
             if scaler is not None and scaler.is_enabled():
-                with torch.amp.autocast():
+                with torch.amp.autocast(device_type=device.type):
                     logits = model(x)
                     loss = criterion(logits, y)
                 scaler.scale(loss).backward()
@@ -309,7 +503,9 @@ def run_epoch(model, loader, device, criterion, optimizer=None,
                 logits = model(x)
                 loss = criterion(logits, y)
 
-        total_loss += float(loss.detach().cpu().item()) * x.size(0)
+        loss_val = float(loss.detach().cpu().item())
+        total_loss += loss_val * x.size(0)
+        loop.set_postfix(loss=loss_val, batches=batch_idx)
 
         if collect_logits or not is_train:
             all_logits.append(logits.detach().cpu().numpy())
@@ -356,7 +552,7 @@ def build_weighted_sampler(ds: ShardDataset, pos_mult: float = 10.0):
     weights = np.zeros(len(ds), dtype=np.float32)
     for i, (shard_idx, j) in enumerate(ds.index_map):
         if shard_idx not in ds._y_cache:
-            ds._y_cache[shard_idx] = np.load(ds.mani.loc[shard_idx, "y_path"], mmap_mode="r")
+            ds._y_cache[shard_idx] = load_array(ds.mani.loc[shard_idx, "y_path"], mmap_mode="r")
         y = ds._y_cache[shard_idx][j]
         weights[i] = pos_mult if y == 1 else 1.0
     sampler = WeightedRandomSampler(
@@ -386,17 +582,45 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--weighted_sampler", action="store_true",
                     help="Use WeightedRandomSampler on train to balance classes")
+    ap.add_argument("--train_ratio", type=float, default=0.70,
+                    help="Proportion of events allocated to train split (before normalization).")
+    ap.add_argument("--val_ratio", type=float, default=0.15,
+                    help="Proportion of events allocated to validation split.")
+    ap.add_argument("--test_ratio", type=float, default=0.15,
+                    help="Proportion of events allocated to test split.")
+    ap.add_argument("--selected_features", type=str, default=None,
+                    help="Path to JSON file with list of selected feature names to use")
+    ap.add_argument("--patience", type=int, default=5,
+                    help="Early stopping patience: stop if validation F1 doesn't improve for N epochs")
     args = ap.parse_args()
 
     in_dir = Path(args.in_dir)
     seed_everything(args.seed)
 
     manifest_df = read_manifest(in_dir)
-    train_e, val_e, test_e = train_val_test_split_event(manifest_df, seed=args.seed)
+    ratios = (args.train_ratio, args.val_ratio, args.test_ratio)
+    train_e, val_e, test_e = train_val_test_split_event(manifest_df, seed=args.seed, ratios=ratios)
 
-    ds_train = ShardDataset(manifest_df, train_e)
-    ds_val = ShardDataset(manifest_df, val_e)
-    ds_test = ShardDataset(manifest_df, test_e)
+    # Load feature names and selected features if provided
+    feature_names = None
+    selected_features = None
+    feature_names_path = in_dir / "feature_names.json"
+    if feature_names_path.exists():
+        with open(feature_names_path, "r", encoding="utf-8") as f:
+            feature_names = json.load(f)
+    
+    if args.selected_features:
+        selected_path = Path(args.selected_features)
+        if not selected_path.is_absolute():
+            selected_path = in_dir / selected_path
+        if selected_path.exists():
+            with open(selected_path, "r", encoding="utf-8") as f:
+                selected_features = json.load(f)
+            print(f"[INFO] Using {len(selected_features)} selected features from {selected_path}")
+
+    ds_train = ShardDataset(manifest_df, train_e, feature_names=feature_names, selected_features=selected_features)
+    ds_val = ShardDataset(manifest_df, val_e, feature_names=feature_names, selected_features=selected_features)
+    ds_test = ShardDataset(manifest_df, test_e, feature_names=feature_names, selected_features=selected_features)
 
     device = torch.device(args.device)
 
@@ -459,6 +683,8 @@ def main():
 
     best_val_f1 = 0.0
     best_state = None
+    patience_counter = 0
+    best_epoch = 0
 
     for epoch in range(1, args.epochs + 1):
         # Train: không collect logits để tiết kiệm thời gian + RAM
@@ -486,10 +712,17 @@ def main():
 
         va_metrics = evaluate_from_logits(val_logits, val_targets)
 
+        # Early stopping: track best validation F1
+        improved = False
         if va_metrics["best_f1"] > best_val_f1:
             best_val_f1 = va_metrics["best_f1"]
             best_state = {k: (v.detach().cpu() if torch.is_tensor(v) else v)
                           for k, v in model.state_dict().items()}
+            patience_counter = 0
+            best_epoch = epoch
+            improved = True
+        else:
+            patience_counter += 1
 
         print(
             f"[Epoch {epoch:02d}] "
@@ -500,7 +733,13 @@ def main():
             f"p={va_metrics['precision']:.4f} "
             f"r={va_metrics['recall']:.4f} "
             f"prAUC={va_metrics['pr_auc']:.4f}"
+            + (f" *" if improved else "")
         )
+
+        # Early stopping check
+        if patience_counter >= args.patience:
+            print(f"\n[Early Stopping] No improvement for {args.patience} epochs. Best F1={best_val_f1:.4f} at epoch {best_epoch}")
+            break
 
     # Evaluate on test with best checkpoint
     if best_state is not None:
