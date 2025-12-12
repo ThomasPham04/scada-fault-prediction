@@ -1,0 +1,18 @@
+---
+alwaysApply: true
+---
+Project title: *Developing a Deep Learning Model for Equipment Fault Prediction Using SCADA Data.*
+
+Description:
+The project focuses on applying deep learning models to predict industrial equipment failures using data collected from SCADA systems. SCADA data contains many sensor signals such as pressure, temperature, voltage, current, and flow rate. These signals can be exploited to predict faults early, prevent production downtime, and reduce maintenance cost.
+
+Requirements:
+
+1. Theoretical study: characteristics of SCADA data and deep learning techniques such as RNN, LSTM, GRU, and CNN.
+2. Data collection and preprocessing: normalization, missing-data handling, and extraction of important features.
+3. Deep learning model development:
+
+   * LSTM/GRU for time-series data
+   * CNN or hybrid CNN-LSTM for complex feature learning
+4. Model training and evaluation using real or simulated SCADA data, with metrics such as Precision, Recall, F1-score, and RMSE.
+5. Practical application: build a prototype real-time fault prediction system with early-warning capability.
