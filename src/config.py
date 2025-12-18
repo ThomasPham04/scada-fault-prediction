@@ -40,6 +40,130 @@ SEQUENCE_LENGTH = int(PREDICTION_WINDOW_HOURS * 60 / TIME_RESOLUTION)
 EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test']
 
 # =============================================================================
+# NORMAL BEHAVIOR MODEL (NBM) PARAMETERS
+# =============================================================================
+
+# NBM Window Configuration
+NBM_WINDOW_DAYS = 14
+NBM_WINDOW_SIZE = int(NBM_WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 2016 timesteps
+NBM_STRIDE = 72  # 12 hours (50% overlap for 1-day stride)
+
+# Normal Data Filtering Criteria
+NBM_CUT_IN_WIND_SPEED = 4.0  # m/s
+NBM_MIN_POWER = 0.0  # kW
+NBM_NORMAL_STATUS = [0]  # Only status_type == 0 (normal operation)
+
+# Feature Groups for NBM
+NBM_TEMPERATURE_FEATURES = [
+    'sensor_0_avg',   # Ambient temperature
+    'sensor_6_avg',   # Hub controller temp
+    'sensor_7_avg',   # Nacelle controller temp
+    'sensor_8_avg',   # VCS choke coils temp
+    'sensor_9_avg',   # VCP-board temp
+    'sensor_10_avg',  # VCS cooling water temp
+    'sensor_11_avg',  # Gearbox bearing temp (CRITICAL)
+    'sensor_12_avg',  # Gearbox oil temp (CRITICAL)
+    'sensor_13_avg',  # Generator bearing DE (CRITICAL)
+    'sensor_14_avg',  # Generator bearing NDE (CRITICAL)
+    'sensor_15_avg',  # Generator stator L1
+    'sensor_16_avg',  # Generator stator L2
+    'sensor_17_avg',  # Generator stator L3
+    'sensor_19_avg',  # Split ring chamber temp
+    'sensor_20_avg',  # Busbar section temp
+    'sensor_21_avg',  # IGBT grid side inverter temp
+    'sensor_35_avg',  # IGBT rotor side inverter L1
+    'sensor_36_avg',  # IGBT rotor side inverter L2
+    'sensor_37_avg',  # IGBT rotor side inverter L3
+    'sensor_38_avg',  # HV transformer L1 (CRITICAL)
+    'sensor_39_avg',  # HV transformer L2 (CRITICAL)
+    'sensor_40_avg',  # HV transformer L3 (CRITICAL)
+    'sensor_41_avg',  # Hydraulic oil temp (CRITICAL)
+    'sensor_43_avg',  # Nacelle temperature
+    'sensor_53_avg',  # Nose cone temperature
+]
+
+NBM_RPM_FEATURES = [
+    'sensor_18_avg',  # Generator RPM
+    'sensor_18_max',
+    'sensor_18_min',
+    'sensor_18_std',
+    'sensor_52_avg',  # Rotor RPM
+    'sensor_52_max',
+    'sensor_52_min',
+    'sensor_52_std',
+]
+
+NBM_ELECTRICAL_FEATURES = [
+    'sensor_23_avg',  # Current L1
+    'sensor_24_avg',  # Current L2
+    'sensor_25_avg',  # Current L3
+    'sensor_32_avg',  # Voltage L1
+    'sensor_33_avg',  # Voltage L2
+    'sensor_34_avg',  # Voltage L3
+    'sensor_26_avg',  # Grid frequency
+    'sensor_22_avg',  # Phase displacement
+]
+
+NBM_WIND_POWER_FEATURES = [
+    'wind_speed_3_avg',
+    'wind_speed_3_max',
+    'wind_speed_3_min',
+    'wind_speed_3_std',
+    'wind_speed_4_avg',  # Estimated windspeed
+    'power_29_avg',      # Possible grid active power
+    'power_29_max',
+    'power_29_min',
+    'power_29_std',
+    'power_30_avg',      # Grid power
+    'power_30_max',
+    'power_30_min',
+    'power_30_std',
+    'reactive_power_27_avg',
+    'reactive_power_27_max',
+    'reactive_power_27_min',
+    'reactive_power_27_std',
+    'reactive_power_28_avg',
+    'reactive_power_28_max',
+    'reactive_power_28_min',
+    'reactive_power_28_std',
+    'sensor_31_avg',  # Grid reactive power
+    'sensor_31_max',
+    'sensor_31_min',
+    'sensor_31_std',
+]
+
+# Angle features (will be converted to sin/cos)
+NBM_ANGLE_FEATURES = [
+    'sensor_1_avg',   # Wind absolute direction
+    'sensor_2_avg',   # Wind relative direction
+    'sensor_5_avg',   # Pitch angle
+    'sensor_5_max',
+    'sensor_5_min',
+    'sensor_5_std',
+    'sensor_42_avg',  # Nacelle direction
+]
+
+# Counter features (will be DROPPED - not useful for NBM)
+NBM_COUNTER_FEATURES = [
+    'sensor_44_avg',  # Active power - generator disconnected
+    'sensor_45_avg',  # Active power - generator delta
+    'sensor_46_avg',  # Active power - generator star
+    'sensor_47_avg',  # Reactive power - generator disconnected
+    'sensor_48_avg',  # Reactive power - generator delta
+    'sensor_49_avg',  # Reactive power - generator star
+    'sensor_50_avg',  # Total active power
+    'sensor_51_avg',  # Total reactive power
+]
+
+# Combine all feature groups (excluding angles and counters - will be processed separately)
+NBM_FEATURE_COLUMNS = (
+    NBM_TEMPERATURE_FEATURES +
+    NBM_RPM_FEATURES +
+    NBM_ELECTRICAL_FEATURES +
+    NBM_WIND_POWER_FEATURES
+)
+
+# =============================================================================
 # MODEL HYPERPARAMETERS
 # =============================================================================
 
@@ -57,6 +181,16 @@ LEARNING_RATE = 0.001
 BATCH_SIZE = 32
 EPOCHS = 50
 EARLY_STOPPING_PATIENCE = 10
+
+# NBM LSTM Prediction Model
+NBM_LSTM_UNITS_1 = 128
+NBM_LSTM_UNITS_2 = 64
+NBM_DROPOUT_RATE = 0.2
+NBM_DENSE_UNITS = 64
+NBM_LEARNING_RATE = 0.0001
+NBM_BATCH_SIZE = 32
+NBM_EPOCHS = 100
+NBM_EARLY_STOPPING_PATIENCE = 15
 
 # =============================================================================
 # HELPER FUNCTIONS
