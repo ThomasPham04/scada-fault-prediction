@@ -286,6 +286,75 @@ def temporal_split_train_val(train_data: np.ndarray, val_ratio: float = 0.15) ->
     return train_split, val_split
 
 
+def save_raw_splits_as_csv(train_split: np.ndarray, val_split: np.ndarray, 
+                           test_data_dict: dict, feature_cols: list, output_dir: str):
+    """
+    Save train/val/test splits as CSV files BEFORE normalization and sequencing.
+    This preserves the raw feature values for analysis.
+    
+    Args:
+        train_split: Training data (n_timesteps, n_features)
+        val_split: Validation data (n_timesteps, n_features)
+        test_data_dict: Dictionary of test data by event
+        feature_cols: List of feature column names
+        output_dir: Output directory
+    """
+    nbm_dir = os.path.join(output_dir, 'NBM_v2')
+    os.makedirs(nbm_dir, exist_ok=True)
+    csv_dir = os.path.join(nbm_dir, 'csv_splits')
+    os.makedirs(csv_dir, exist_ok=True)
+    
+    print(f"\n{'='*70}")
+    print("Saving raw data splits as CSV files...")
+    print(f"{'='*70}")
+    
+    # Save train split
+    train_df = pd.DataFrame(train_split, columns=feature_cols)
+    train_path = os.path.join(csv_dir, 'train.csv')
+    train_df.to_csv(train_path, index=False)
+    print(f"  Train: {train_df.shape} → {train_path}")
+    
+    # Save validation split
+    val_df = pd.DataFrame(val_split, columns=feature_cols)
+    val_path = os.path.join(csv_dir, 'val.csv')
+    val_df.to_csv(val_path, index=False)
+    print(f"  Val:   {val_df.shape} → {val_path}")
+    
+    # Save test data (combined all events)
+    test_data_combined = []
+    test_event_ids = []
+    test_labels = []
+    
+    for event_id, data in test_data_dict.items():
+        features = data['features']
+        n_rows = features.shape[0]
+        test_data_combined.append(features)
+        test_event_ids.extend([event_id] * n_rows)
+        test_labels.extend([data['label']] * n_rows)
+    
+    if test_data_combined:
+        test_combined_array = np.vstack(test_data_combined)
+        test_df = pd.DataFrame(test_combined_array, columns=feature_cols)
+        test_df.insert(0, 'event_id', test_event_ids)
+        test_df.insert(1, 'event_label', test_labels)
+        test_path = os.path.join(csv_dir, 'test.csv')
+        test_df.to_csv(test_path, index=False)
+        print(f"  Test:  {test_df.shape} → {test_path}")
+        
+        # Also save test data by individual events
+        test_by_event_dir = os.path.join(csv_dir, 'test_by_event')
+        os.makedirs(test_by_event_dir, exist_ok=True)
+        
+        for event_id, data in test_data_dict.items():
+            event_df = pd.DataFrame(data['features'], columns=feature_cols)
+            event_path = os.path.join(test_by_event_dir, f'event_{event_id}.csv')
+            event_df.to_csv(event_path, index=False)
+        
+        print(f"  Test by event: {len(test_data_dict)} files → {test_by_event_dir}")
+    
+    print(f"\nCSV splits saved to: {csv_dir}")
+
+
 def create_sequences_nbm(data: np.ndarray, window_size: int, stride: int = 1) -> tuple:
     """
     Create sliding window sequences for NBM LSTM Prediction.
@@ -471,6 +540,12 @@ def main():
         WIND_FARM_A_DATASETS,
         event_info,
         feature_cols
+    )
+    
+    # Save raw splits as CSV (before normalization and sequencing)
+    save_raw_splits_as_csv(
+        train_split, val_split, test_data_dict,
+        feature_cols, WIND_FARM_A_PROCESSED
     )
     
     # Normalize data

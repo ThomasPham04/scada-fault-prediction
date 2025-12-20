@@ -143,16 +143,21 @@ NBM_ANGLE_FEATURES = [
     'sensor_42_avg',  # Nacelle direction
 ]
 
-# Counter features (will be DROPPED - not useful for NBM)
+# Cumulative energy features (will be DROPPED - not useful for NBM)
+# These features are in Wh (Watt-hour) and VArh (Volt-Ampere reactive hour) units,
+# representing cumulative energy rather than instantaneous measurements.
+# NBM requires real-time state indicators, not accumulated counters.
+# We already have instantaneous power features: power_29, power_30, sensor_31 (kW, kVAr)
+# NOTE: These sensors don't have '_avg' suffix in the CSV files
 NBM_COUNTER_FEATURES = [
-    'sensor_44_avg',  # Active power - generator disconnected
-    'sensor_45_avg',  # Active power - generator delta
-    'sensor_46_avg',  # Active power - generator star
-    'sensor_47_avg',  # Reactive power - generator disconnected
-    'sensor_48_avg',  # Reactive power - generator delta
-    'sensor_49_avg',  # Reactive power - generator star
-    'sensor_50_avg',  # Total active power
-    'sensor_51_avg',  # Total reactive power
+    'sensor_44',  # Active power - generator disconnected (Wh)
+    'sensor_45',  # Active power - generator delta (Wh)
+    'sensor_46',  # Active power - generator star (Wh)
+    'sensor_47',  # Reactive power - generator disconnected (VArh)
+    'sensor_48',  # Reactive power - generator delta (VArh)
+    'sensor_49',  # Reactive power - generator star (VArh)
+    'sensor_50',  # Total active power (Wh)
+    'sensor_51',  # Total reactive power (VArh)
 ]
 
 # Combine all feature groups (excluding angles and counters - will be processed separately)
