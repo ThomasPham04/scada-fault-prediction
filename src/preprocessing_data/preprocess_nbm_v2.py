@@ -299,7 +299,9 @@ def save_raw_splits_as_csv(train_split: np.ndarray, val_split: np.ndarray,
         feature_cols: List of feature column names
         output_dir: Output directory
     """
-    nbm_dir = os.path.join(output_dir, 'NBM_v2')
+    # nbm_dir = os.path.join(output_dir, 'NBM_v2')
+    nbm_dir = os.path.join(output_dir, 'NBM_7day')
+
     os.makedirs(nbm_dir, exist_ok=True)
     csv_dir = os.path.join(nbm_dir, 'csv_splits')
     os.makedirs(csv_dir, exist_ok=True)
@@ -437,7 +439,9 @@ def normalize_data_nbm(X_train: np.ndarray, X_val: np.ndarray,
         }
     
     # Save scaler
-    scaler_path = os.path.join(output_dir, "nbm_scaler_v2.pkl")
+    # scaler_path = os.path.join(output_dir, "nbm_scaler_v2.pkl")
+    scaler_path = os.path.join(output_dir, 'NBM_7day', "nbm_scaler_7day.pkl")
+
     joblib.dump(scaler, scaler_path)
     print(f"\nNBM Scaler saved to: {scaler_path}")
     
@@ -449,7 +453,8 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
     """Save NBM V2 preprocessed data."""
     ensure_dirs()
     
-    nbm_dir = os.path.join(output_dir, 'NBM_v2')
+    # nbm_dir = os.path.join(output_dir, 'NBM_v2')
+    nbm_dir = os.path.join(output_dir, 'NBM_7day')
     os.makedirs(nbm_dir, exist_ok=True)
     
     # Save train/val arrays
@@ -497,7 +502,9 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
         'split_strategy': 'temporal_train_val_split_plus_prediction_test'
     }
     
-    metadata_path = os.path.join(nbm_dir, "nbm_metadata_v2.pkl")
+    # metadata_path = os.path.join(nbm_dir, "nbm_metadata_v2.pkl")
+    metadata_path = os.path.join(nbm_dir, "nbm_metadata_7day.pkl")
+
     joblib.dump(metadata, metadata_path)
     print(f"\nMetadata saved to: {metadata_path}")
 
@@ -566,7 +573,9 @@ def main():
     print("\n" + "=" * 70)
     print("NBM V2 Preprocessing Complete!")
     print("=" * 70)
-    print("\nData saved to: Dataset/processed/Wind Farm A/NBM_v2/")
+    # print("\nData saved to: Dataset/processed/Wind Farm A/NBM_v2/")
+    print("\nData saved to: Dataset/processed/Wind Farm A/NBM_7day/")
+
     print(f"  • Train/Val: Combined arrays")
     print(f"  • Test: Per-event files (for anomaly evaluation)")
 

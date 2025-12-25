@@ -44,10 +44,10 @@ EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test']
 # =============================================================================
 
 # NBM Window Configuration
-NBM_WINDOW_DAYS = 14
-NBM_WINDOW_SIZE = int(NBM_WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 2016 timesteps
-NBM_STRIDE = 72  # 12 hours (50% overlap for 1-day stride)
-
+# nhun
+NBM_WINDOW_DAYS = 7  # Changed from 14 to 7 days
+NBM_WINDOW_SIZE = int(NBM_WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 1008 timesteps (was 2016)
+NBM_STRIDE = 36  # 6 hours stride (was 72 - 12 hours)
 # Normal Data Filtering Criteria
 NBM_CUT_IN_WIND_SPEED = 4.0  # m/s
 NBM_MIN_POWER = 0.0  # kW

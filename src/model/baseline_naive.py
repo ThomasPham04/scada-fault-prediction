@@ -20,9 +20,13 @@ from config import WIND_FARM_A_PROCESSED, MODELS_DIR, RESULTS_DIR, ensure_dirs
 
 def load_nbm_v2_data():
     """Load NBM V2 preprocessed data."""
-    nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_v2')
+    # nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_v2')
+    nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_7day')
+
     
-    print("Loading NBM V2 data for naive baseline...")
+    # print("Loading NBM V2 data for naive baseline...")
+    print("Loading NBM 7-day data for naive baseline...")
+
     X_train = np.load(os.path.join(nbm_dir, 'X_train.npy'))
     X_val = np.load(os.path.join(nbm_dir, 'X_val.npy'))
     y_train = np.load(os.path.join(nbm_dir, 'y_train.npy'))
@@ -35,7 +39,9 @@ def load_nbm_v2_data():
     print(f"  Train samples: {X_train_last.shape} (using last timestep only)")
     print(f"  Val samples: {X_val_last.shape}")
     
-    metadata = joblib.load(os.path.join(nbm_dir, 'nbm_metadata_v2.pkl'))
+    # metadata = joblib.load(os.path.join(nbm_dir, 'nbm_metadata_v2.pkl'))
+    metadata = joblib.load(os.path.join(nbm_dir, 'nbm_metadata_7day.pkl'))
+
     
     # Load test
     test_dir = os.path.join(nbm_dir, 'test_by_event')

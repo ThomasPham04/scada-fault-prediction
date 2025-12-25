@@ -25,3 +25,6 @@ results/
 models/
 report/ 
 planning/ 
+*png
+docs/
+*.svg

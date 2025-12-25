@@ -36,15 +36,15 @@ def set_seeds(seed: int = RANDOM_SEED):
 
 def load_nbm_v2_data():
     """Load NBM V2 preprocessed data."""
-    nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_v2')
+    nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_7day')
     
-    print("Loading NBM V2 preprocessed data...")
+    print("Loading NBM 7-day preprocessed data...")
     X_train = np.load(os.path.join(nbm_dir, 'X_train.npy'))
     X_val = np.load(os.path.join(nbm_dir, 'X_val.npy'))
     y_train = np.load(os.path.join(nbm_dir, 'y_train.npy'))
     y_val = np.load(os.path.join(nbm_dir, 'y_val.npy'))
     
-    metadata = joblib.load(os.path.join(nbm_dir, 'nbm_metadata_v2.pkl'))
+    metadata = joblib.load(os.path.join(nbm_dir, 'nbm_metadata_7day.pkl'))
     
     print(f"  X_train: {X_train.shape}")
     print(f"  X_val: {X_val.shape}")
@@ -111,7 +111,7 @@ def get_callbacks(model_path: str) -> list:
             verbose=1
         ),
         callbacks.TensorBoard(
-            log_dir=os.path.join(RESULTS_DIR, 'nbm_v2_logs'),
+            log_dir=os.path.join(RESULTS_DIR, 'nbm_7day_logs'),
             histogram_freq=0
         )
     ]
@@ -241,13 +241,13 @@ def save_results(errors: dict, metadata: dict, output_dir: str):
         },
     }
     
-    results_path = os.path.join(output_dir, 'nbm_v2_results.json')
+    results_path = os.path.join(output_dir, 'nbm_7day_results.json')
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
     print(f"Results saved to: {results_path}")
     
     # Save errors for threshold tuning
-    errors_path = os.path.join(output_dir, 'nbm_v2_errors.npz')
+    errors_path = os.path.join(output_dir, 'nbm_7day_errors.npz')
     np.savez(
         errors_path,
         train_mse=errors['train']['mse_per_sample'],
@@ -267,7 +267,7 @@ def main():
     set_seeds()
     ensure_dirs()
     
-    results_dir = os.path.join(RESULTS_DIR, 'NBM_v2')
+    results_dir = os.path.join(RESULTS_DIR, 'NBM_7day')
     os.makedirs(results_dir, exist_ok=True)
     
     # Load data
@@ -284,7 +284,7 @@ def main():
     )
     
     # Train
-    model_path = os.path.join(MODELS_DIR, 'nbm_lstm_v2.keras')
+    model_path = os.path.join(MODELS_DIR, 'nbm_lstm_7day.keras')
     history = train_nbm_model(
         model,
         data['X_train'], data['y_train'],
