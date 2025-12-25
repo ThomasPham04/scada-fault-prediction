@@ -401,6 +401,11 @@ def main():
             all_X.append(X)
             all_y.append(y)
 
+        if args.use_selected_features:
+            X, y = upsample_anomalies(X, y, factor=2768)
+            all_X.append(X)
+            all_y.append(y)
+        
         X_path = out_dir / f"X_{event_id}.npy"
         y_path = out_dir / f"y_{event_id}.npy"
         meta_path = out_dir / f"meta_{event_id}.csv"
@@ -428,12 +433,14 @@ def main():
         with open(out_dir / "scaler_stats.json", "w", encoding="utf-8") as fjs:
             json.dump(scaler_all, fjs, ensure_ascii=False, indent=2)
     if args.compute_corr_only:
-        top_features = compute_point_biserial(X_all=all_X, y_all=all_y, K_top=88, feature_cols=feature_cols)
+        top_features = compute_point_biserial(X_all=all_X, y_all=all_y, K_top=50, feature_cols=feature_cols)
         with open(out_dir /"selected_features.json", "w", encoding="utf-8") as fjs:
             json.dump(top_features, fjs, ensure_ascii=False, indent=2)
             
         print(f"[PASS 1 DONE] Top features saved to selected_features.json")
         exit(0)
+    if args.use_selected_features:
+        print_label_distribution(y=np.concatenate(all_y, axis=0), name="y_all (after upsample + selected features)")
     print("\n=== DONE (Fast, Fixed) ===")
     print(f"Output dir: {out_dir}")
     print("Artifacts per event: X_<id>.npy, y_<id>.npy, meta_<id>.csv")

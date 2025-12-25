@@ -331,7 +331,7 @@ def main():
 
     ds_train = ShardDataset(manifest_df, train_e)
     if args.weighted_sampler:
-        sampler = build_weighted_sampler(ds_train, pos_mult=10.0)
+        sampler = build_weighted_sampler(ds_train, pos_mult=3.0)
         train_loader = DataLoader(ds_train, batch_size=args.batch_size, sampler=sampler,
                               num_workers=args.num_workers, pin_memory=True, drop_last=False)
     else:
