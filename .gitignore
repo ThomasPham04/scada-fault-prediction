@@ -28,3 +28,7 @@ planning/
 *png
 docs/
 *.svg
+.cursor/
+src/analysis/
+src/utils/
+evaluate/
