@@ -18,4 +18,17 @@ train_lstm_early_warning.py
 ver2.py
 output*
 *.ipynb
+task.md
+*.pdf
+check/
+results/
+models/
+report/ 
+planning/ 
+*png
+docs/
+*.svg
 .cursor/
+src/analysis/
+src/utils/
+evaluate/
