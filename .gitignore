@@ -32,3 +32,6 @@ docs/
 src/analysis/
 src/utils/
 evaluate/
+src/model/tf_env_312/
+src/preprocessing_data/tf_env_312/
+tf_env_312/
