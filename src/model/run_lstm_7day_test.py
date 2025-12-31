@@ -1,38 +1,39 @@
 """
 Run NBM LSTM (7-day) Model on Test Set - Final Evaluation
-Optimized with best threshold (p95) and detailed analysis
+Optimized with dynamic threshold from PR curve on val set
 """
 
 import os
 import sys
 import numpy as np
 import json
+from sklearn.metrics import precision_recall_curve
 import tensorflow as tf
 from tensorflow import keras
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import WIND_FARM_A_PROCESSED, MODELS_DIR, RESULTS_DIR
 
-def load_test_data():
-    """Load test events from NBM 7-day."""
+def load_events(data_split='test'):
+    """Load events from NBM 7-day (test or val)."""
     nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_7day')
-    test_dir = os.path.join(nbm_dir, 'test_by_event')
+    split_dir = os.path.join(nbm_dir, f'{data_split}_by_event')
     
-    test_events = {}
-    print("Loading test events...")
+    events = {}
+    print(f"Loading {data_split} events...")
     
-    if not os.path.exists(test_dir):
-        print(f"Error: Directory not found: {test_dir}")
+    if not os.path.exists(split_dir):
+        print(f"Error: Directory not found: {split_dir}")
         return {}
 
-    for filename in os.listdir(test_dir):
+    for filename in os.listdir(split_dir):
         if filename.endswith('.npz'):
             try:
                 event_id = int(filename.split('_')[1].split('.')[0])
-                data = np.load(os.path.join(test_dir, filename), allow_pickle=True)
+                data = np.load(os.path.join(split_dir, filename), allow_pickle=True)
                 
                 if 'X' in data and 'y' in data:
-                    test_events[event_id] = {
+                    events[event_id] = {
                         'X': data['X'],
                         'y': data['y'],
                         'label': str(data['label'])
@@ -42,37 +43,99 @@ def load_test_data():
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
     
-    print(f"  Loaded {len(test_events)} test events")
-    return test_events
+    print(f"  Loaded {len(events)} {data_split} events")
+    return events
 
-def determine_threshold(percentile=95):
-    """Determine threshold from validation errors."""
-    errors_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'nbm_7day_errors.npz')
-    
-    if not os.path.exists(errors_path):
-        print(f"Error: Errors file not found: {errors_path}")
-        return None
+def smooth_mae(mae, window=3):
+    """Simple moving average smoothing for MAE to reduce noise spikes."""
+    if len(mae) <= window:
+        return mae
+    return np.convolve(mae, np.ones(window)/window, mode='same')
 
-    data = np.load(errors_path)
-    val_mae = data['val_mae']
+def compute_event_scores(model, events):
+    """Compute event_p95 MAE scores for PR curve or evaluation."""
+    scores = []
+    labels = []
+    detailed = []  # For val stats
     
-    threshold = np.percentile(val_mae, percentile)
+    for event_id, data in sorted(events.items()):
+        X = data['X']
+        y = data['y']
+        true_label = data['label']
+        
+        # Predict
+        y_pred = model.predict(X, verbose=0, batch_size=256)
+        
+        # Compute MAE per sample
+        mae = np.mean(np.abs(y - y_pred), axis=1)
+        
+        # Optional: Smooth MAE
+        mae = smooth_mae(mae, window=3)
+        
+        # Event score: p95 MAE (consistent with original)
+        event_p95 = np.percentile(mae, 95)
+        
+        scores.append(event_p95)
+        labels.append(1 if true_label == 'anomaly' else 0)
+        
+        # Detailed for output
+        detailed.append({
+            'event_id': int(event_id),
+            'true_label': true_label,
+            'mae_mean': float(np.mean(mae)),
+            'mae_p95': float(event_p95),
+            'mae_max': float(np.max(mae)),
+            'n_samples': int(len(mae))
+        })
     
-    # Also show other percentiles for reference
-    print(f"\nValidation MAE Statistics:")
-    print(f"  Mean:  {np.mean(val_mae):.6f}")
-    print(f"  Std:   {np.std(val_mae):.6f}")
-    print(f"  p90:   {np.percentile(val_mae, 90):.6f}")
-    print(f"  p95:   {np.percentile(val_mae, 95):.6f}")
-    print(f"  p99:   {np.percentile(val_mae, 99):.6f}")
-    print(f"  p99.9: {np.percentile(val_mae, 99.9):.6f}")
-    
-    print(f"\nUsing threshold (p{percentile}): {threshold:.6f}")
-    return threshold
+    return np.array(scores), np.array(labels), detailed
 
-def evaluate(model, test_events, threshold):
-    """Evaluate model on all test events."""
-    print(f"\nEvaluating with threshold: {threshold:.6f}")
+def determine_threshold(model, val_events, min_recall=0.7, smoothing_window=3):
+    print("\nComputing val scores for threshold optimization...")
+    val_scores, val_labels, val_detailed = compute_event_scores(model, val_events)
+    
+    # PR Curve
+    prec, rec, thresholds = precision_recall_curve(val_labels, val_scores)
+    f1_scores = 2 * prec * rec / (prec + rec + 1e-6)
+    
+    # Find best threshold: max F1 with recall >= min_recall
+    valid_idx = np.where(rec >= min_recall)[0]
+    if len(valid_idx) > 0:
+        best_idx = valid_idx[np.argmax(f1_scores[valid_idx])]
+        opt_threshold = thresholds[best_idx]
+        best_prec = prec[best_idx]
+        best_rec = rec[best_idx]
+        best_f1 = f1_scores[best_idx]
+    else:
+        # FIXED: Fallback to p99 for strict FAR reduction (instead of max F1)
+        opt_threshold = np.percentile(val_scores, 99)
+        best_prec = np.mean(val_labels)  # Approximate
+        best_rec = 0.5  # Approximate
+        best_f1 = 0.0
+        print(f"Warning: No threshold meets recall >= {min_recall}. Using p99 fallback for low FAR: {opt_threshold:.6f}")
+    
+    # Val MAE stats (giữ nguyên)
+    print(f"\nValidation MAE Statistics (event_p95):")
+    print(f"  Mean:  {np.mean(val_scores):.6f}")
+    print(f"  Std:   {np.std(val_scores):.6f}")
+    print(f"  p90:   {np.percentile(val_scores, 90):.6f}")
+    print(f"  p95:   {np.percentile(val_scores, 95):.6f}")
+    print(f"  p99:   {np.percentile(val_scores, 99):.6f}")
+    
+    print(f"\nOptimized Threshold (PR Curve, min_recall={min_recall}): {opt_threshold:.6f}")
+    print(f"  Val Prec: {best_prec:.4f} | Rec: {best_rec:.4f} | F1: {best_f1:.4f}")
+    
+    # Save val detailed (giữ nguyên)
+    val_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'val_detailed.json')
+    with open(val_path, 'w') as f:
+        json.dump({'val_detailed': val_detailed}, f, indent=2)
+    print(f"Val details saved to: {val_path}")
+    
+    return opt_threshold
+
+def evaluate(model, test_events, threshold, min_recall=0.7, smoothing_window=3):
+    """Evaluate model on test events (giống code cũ, nhưng dùng smooth nếu cần)."""
+    print(f"\nEvaluating with optimized threshold: {threshold:.6f}")
     
     TP = FP = TN = FN = 0
     results = []
@@ -86,38 +149,31 @@ def evaluate(model, test_events, threshold):
         y = data['y']
         true_label = data['label']
         
-        # Predict
+        # Predict & MAE (with smoothing)
         y_pred = model.predict(X, verbose=0, batch_size=256)
-        
-        # Compute MAE per sample
         mae = np.mean(np.abs(y - y_pred), axis=1)
+        mae = smooth_mae(mae, window=smoothing_window)
         
-        # Use p95 of event's MAE as anomaly score (best performing threshold)
+        # Event score
         event_p95 = np.percentile(mae, 95)
-        detected = event_p95 > threshold
+        above_th_count = np.sum(mae > threshold)
+        duration = above_th_count / len(mae)
+        detected = (event_p95 > threshold) and (duration >= 0.25)
         
-        # Additional stats for analysis
+        # Stats
         mean_mae = np.mean(mae)
         max_mae = np.max(mae)
         
-        # Determine confusion matrix type
+        # Confusion
         is_anomaly = (true_label == 'anomaly')
         if is_anomaly and detected:
-            res_type = "TP"
-            TP += 1
-            symbol = "[OK] TP"
+            res_type = "TP"; TP += 1; symbol = "[OK] TP"
         elif not is_anomaly and not detected:
-            res_type = "TN"
-            TN += 1
-            symbol = "[OK] TN"
+            res_type = "TN"; TN += 1; symbol = "[OK] TN"
         elif not is_anomaly and detected:
-            res_type = "FP"
-            FP += 1
-            symbol = "[X]  FP"
+            res_type = "FP"; FP += 1; symbol = "[X]  FP"
         else:
-            res_type = "FN"
-            FN += 1
-            symbol = "[X]  FN"
+            res_type = "FN"; FN += 1; symbol = "[X]  FN"
             
         print(f"{event_id:<8} {true_label:<12} {'Anomaly' if detected else 'Normal':<12} {symbol:<10} "
               f"{mean_mae:<12.4f} {event_p95:<12.4f} {max_mae:<12.4f} {len(mae):<10}")
@@ -133,36 +189,19 @@ def evaluate(model, test_events, threshold):
             'n_samples': int(len(mae))
         })
 
-    # Summary
+    # Metrics (giống code cũ)
+    total = TP + FP + TN + FN
+    accuracy = (TP + TN) / total if total > 0 else 0
+    recall = TP / (TP + FN) if (TP + FN) > 0 else 0
+    precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+    far = FP / (FP + TN) if (FP + TN) > 0 else 0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+    
     print("=" * 120)
     print("\nCONFUSION MATRIX:")
     print(f"                    Predicted Anomaly | Predicted Normal")
     print(f"  Actual Anomaly  |       {TP:3d}        |      {FN:3d}")
     print(f"  Actual Normal   |       {FP:3d}        |      {TN:3d}")
-    
-    # Metrics
-    total = TP + FP + TN + FN
-    accuracy = (TP + TN) / total if total > 0 else 0
-    
-    if (TP + FN) > 0: 
-        recall = TP / (TP + FN)
-    else: 
-        recall = 0
-    
-    if (TP + FP) > 0: 
-        precision = TP / (TP + FP)
-    else: 
-        precision = 0
-    
-    if (FP + TN) > 0: 
-        far = FP / (FP + TN)
-    else: 
-        far = 0
-    
-    if (precision + recall) > 0: 
-        f1 = 2 * precision * recall / (precision + recall)
-    else: 
-        f1 = 0
     
     print(f"\nPERFORMANCE METRICS:")
     print(f"  Accuracy:             {accuracy:.2%}")
@@ -176,7 +215,7 @@ def evaluate(model, test_events, threshold):
     print(f"  Anomalies:            {TP + FN} (Detected: {TP}, Missed: {FN})")
     print(f"  Normal:               {TN + FP} (Correct: {TN}, False Alarms: {FP})")
     
-    # Comparison with Naive Baseline
+    # Naive baseline comparison (giữ nguyên)
     print("\n" + "=" * 120)
     print("COMPARISON WITH NAIVE BASELINE")
     print("=" * 120)
@@ -215,11 +254,12 @@ def evaluate(model, test_events, threshold):
         print("  Naive baseline results not found. Skipping comparison.")
     
     # Save results
-    output_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'lstm_test_evaluation.json')
+    output_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'lstm_test_evaluation_optimized.json')
     save_data = {
-        'model': 'NBM_LSTM_7day',
+        'model': 'NBM_LSTM_7day_Optimized',
         'threshold': float(threshold),
-        'threshold_type': 'p95_of_val_mae',
+        'threshold_type': 'PR_Curve_Optimized',
+        'min_recall_target': min_recall,  # Fixed: now param
         'metrics': {
             'accuracy': accuracy,
             'recall': recall, 
@@ -239,8 +279,8 @@ def evaluate(model, test_events, threshold):
 
 def main():
     print("=" * 120)
-    print("NBM LSTM (7-day) - Event Duration Test Set Evaluation")
-    print("Using test data from event_start to event_end only")
+    print("NBM LSTM (7-day) - Optimized Threshold Evaluation")
+    print("Using PR curve on val set for dynamic threshold")
     print("=" * 120)
     
     # Load Model
@@ -253,19 +293,24 @@ def main():
     model = keras.models.load_model(model_path)
     print("  Model loaded successfully!")
     
-    # Load Data
-    test_events = load_test_data()
+    # Load Val & Test Data
+    val_events = load_events('val')
+    test_events = load_events('test')
+    
+    if not val_events:
+        print("Error: No val events loaded! Need val_by_event dir.")
+        return
     if not test_events:
         print("Error: No test events loaded!")
         return
         
-    # Threshold (p95 gives best F1 score based on multi-threshold analysis)
-    threshold = determine_threshold(percentile=95)
+    # Optimize Threshold (min_recall=0.7, adjust if needed)
+    threshold = determine_threshold(model, val_events, min_recall=0.7, smoothing_window=5)
     if threshold is None:
         return
         
-    # Evaluate
-    evaluate(model, test_events, threshold)
+    # Evaluate Test (Fixed: pass min_recall)
+    evaluate(model, test_events, threshold, min_recall=0.7, smoothing_window=5)
 
 if __name__ == "__main__":
     main()

@@ -28,3 +28,6 @@ planning/
 *png
 docs/
 *.svg
+src/model/tf_env_312/
+src/preprocessing_data/tf_env_312/
+tf_env_312/
