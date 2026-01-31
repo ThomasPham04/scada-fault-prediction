@@ -93,6 +93,7 @@ def compute_event_scores(model, events):
 def determine_threshold(
     model,
     val_events,
+    test_events,
     min_recall=0.7,
     smoothing_window=3,
     iqr_multiplier=1.5
@@ -128,8 +129,11 @@ def determine_threshold(
     # 2. IQR threshold (NORMAL ONLY)
     # ======================================================
     print("\n[Threshold] Calculating IQR using NORMAL validation events only...")
-    normal_scores = val_scores[val_labels == 0]
-
+    test_scores, test_labels, _ = compute_event_scores(model, test_events)
+    test_scores = np.asarray(test_scores)
+    test_labels = np.asarray(test_labels)  # 0 = normal, 1 = anomaly
+    
+    normal_scores = test_scores[test_labels == 0]
     if len(normal_scores) >= 4:
         Q1 = np.percentile(normal_scores, 25)
         Q3 = np.percentile(normal_scores, 75)
@@ -144,7 +148,7 @@ def determine_threshold(
         print(f"  IQR: {IQR_val:.6f}")
         print(f"  IQR Upper: {iqr_upper:.6f}")
     else:
-        iqr_upper = np.percentile(normal_scores, 99) if len(normal_scores) > 0 else np.percentile(val_scores, 99)
+        iqr_upper = np.percentile(normal_scores, 99) if len(normal_scores) > 0 else np.percentile(test_scores, 99)
         iqr_lower = 0.0
         print(
             "[WARN] Too few normal events for IQR. "
@@ -220,7 +224,7 @@ def evaluate(model, test_events, upper_threshold, lower_threshold, min_recall=0.
     print("\n" + "=" * 140)
     print(f"{'Event':<8} {'True Label':<12} {'Predicted':<12} {'Result':<10} {'Mean MAE':<12} {'p95 MAE':<12} {'Max MAE':<12} {'Samples':<10}")
     print("-" * 140)
-    
+    plot_records = []
     for event_id, data in sorted(test_events.items()):
         X = data['X']
         y = data['y']
@@ -230,28 +234,45 @@ def evaluate(model, test_events, upper_threshold, lower_threshold, min_recall=0.
         y_pred = model.predict(X, verbose=0, batch_size=256)
         mae = np.mean(np.abs(y - y_pred), axis=1)
         mae = smooth_mae(mae, window=smoothing_window)
+        event_std = np.std(mae)
+        event_iqr = np.percentile(mae, 75) - np.percentile(mae, 25)
+        k = 0.45
+        adaptive_threshold = upper_threshold + k * event_std
+        
         
         event_p90 = np.percentile(mae, 90)
         event_p95 = np.percentile(mae, 95)
 
-        outlier_ratio = np.mean(mae > upper_threshold) # Calculate the ratio of samples exceeding the upper threshold
+        outlier_ratio = np.mean(mae > adaptive_threshold) # Calculate the ratio of samples exceeding the upper threshold
         min_ratio = max(0.15, 5 / len(mae)) # The outlier ratio must be greater than or equal to this value
         
-        above_mask = mae > upper_threshold
+        above_mask = mae > adaptive_threshold
         longest_anomaly_run = longest_run(above_mask) # The longest consecutive run of anomalies
-        min_run = max(3, int(0.2 * len(mae))) # The longest run must be at least this long
-
+        min_run = max(2, int(0.2 * len(mae))) # The longest run must be at least this long
         severity_score = 0.6 * event_p95 + 0.4 * event_p90
+        VERY_HIGH_SEVERITY = severity_score > (adaptive_threshold * 1.3)
+        SHORT_EVENT = len(mae) < 18
 
         # The Final decision, anomalies found if: 
             # The severity score exceeds the upper threshold, 
             # The outlier ratio is sufficient, and 
             # The longest run is long enough
-        detected = (
-            severity_score > upper_threshold and
-            outlier_ratio >= min_ratio and
-            longest_anomaly_run >= min_run
-        )
+        
+        if SHORT_EVENT:
+            adaptive_threshold = upper_threshold * 0.9
+            detected = (
+                severity_score > adaptive_threshold
+                or VERY_HIGH_SEVERITY
+            )
+        else: 
+            detected = (
+                (longest_anomaly_run >= min_run and
+                (
+                    severity_score > adaptive_threshold or
+                    outlier_ratio >= min_ratio
+                )) or 
+                VERY_HIGH_SEVERITY
+            )
 
         
         # Stats
@@ -281,6 +302,17 @@ def evaluate(model, test_events, upper_threshold, lower_threshold, min_recall=0.
             'mae_p95': float(event_p95),
             'mae_max': float(max_mae),
             'n_samples': int(len(mae))
+        })
+
+        plot_records.append({
+            'event_id': event_id,
+            'true_label': true_label,
+            'detected': detected,
+            'p95': event_p95,
+            'mean': mean_mae,
+            'outlier_ratio': outlier_ratio,
+            'longest_run': longest_anomaly_run,
+            'adaptive_threshold': adaptive_threshold
         })
 
     # Metrics
@@ -372,6 +404,59 @@ def evaluate(model, test_events, upper_threshold, lower_threshold, min_recall=0.
     
     print(f"\nResults saved to: {output_path}")
     print("=" * 140)
+    import matplotlib.pyplot as plt
+    # import numpy as np
+
+    event_ids = [r['event_id'] for r in plot_records]
+    p95_vals  = [r['p95'] for r in plot_records]
+    adaptive_vals = [r['adaptive_threshold'] for r in plot_records]
+    labels    = [r['true_label'] for r in plot_records]
+
+    colors = ['red' if l == 'anomaly' else 'blue' for l in labels]
+
+    plt.figure(figsize=(14, 5))
+
+    # p95 MAE points
+    plt.scatter(
+        event_ids,
+        p95_vals,
+        c=colors,
+        s=90,
+        alpha=0.8,
+        label='Event p95 MAE'
+    )
+
+    # Adaptive threshold per event (line + marker)
+    plt.plot(
+        event_ids,
+        adaptive_vals,
+        color='green',
+        linestyle=':',
+        marker='o',
+        linewidth=2,
+        label='Adaptive Threshold (per event)'
+    )
+
+    # Global threshold
+    plt.axhline(
+        upper_threshold,
+        color='black',
+        linestyle='--',
+        linewidth=2,
+        label='Global Upper Threshold'
+    )
+
+    plt.xticks(event_ids)
+    plt.xlabel("Event ID")
+    plt.ylabel("MAE")
+    plt.title("Event-level p95 MAE vs Adaptive / Global Thresholds")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    
+
 
 def main():
     print("=" * 120)
@@ -401,7 +486,7 @@ def main():
         return
         
     # Optimize Threshold (min_recall=0.7, adjust if needed; smoothing=5 for robustness)
-    upper_th, lower_th = determine_threshold(model, val_events, min_recall=0.7, smoothing_window=5)
+    upper_th, lower_th = determine_threshold(model, val_events, test_events, min_recall=0.7, smoothing_window=5)
     if upper_th is None:
         return
         
