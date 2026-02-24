@@ -452,27 +452,58 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
                      feature_cols, event_contributions, output_dir):
     """Save NBM V2 preprocessed data."""
     ensure_dirs()
-    
-    # nbm_dir = os.path.join(output_dir, 'NBM_v2')
+   
     nbm_dir = os.path.join(output_dir, 'NBM_7day')
     os.makedirs(nbm_dir, exist_ok=True)
-    
+   
     # Save train/val arrays
     np.save(os.path.join(nbm_dir, 'X_train.npy'), X_train)
     np.save(os.path.join(nbm_dir, 'X_val.npy'), X_val)
     np.save(os.path.join(nbm_dir, 'y_train.npy'), y_train)
     np.save(os.path.join(nbm_dir, 'y_val.npy'), y_val)
-    
+   
     print(f"\nSaved training data:")
     print(f"  X_train: {X_train.shape}")
     print(f"  X_val: {X_val.shape}")
     print(f"  y_train: {y_train.shape}")
     print(f"  y_val: {y_val.shape}")
     
+    train_dir = os.path.join(nbm_dir, 'train_by_event')
+    os.makedirs(train_dir, exist_ok=True)
+
+    n_train_events = 10
+    chunk_size = max(1, len(X_train) // n_train_events)
+
+    train_events_meta = {}
+
+    for i in range(n_train_events):
+        start = i * chunk_size
+        end = start + chunk_size if i < n_train_events - 1 else len(X_train)
+
+        X_chunk = X_train[start:end]
+        y_chunk = y_train[start:end]
+
+        train_event_id = 1000 + i
+        train_file = os.path.join(train_dir, f'event_{train_event_id}.npz')
+
+        np.savez(
+            train_file,
+            X=X_chunk,
+            y=y_chunk,
+            label='normal'
+        )
+
+        train_events_meta[train_event_id] = 'normal'
+
+        print(
+            f"  Train event {train_event_id} (normal): "
+            f"X={X_chunk.shape}, y={y_chunk.shape}"
+        )
+   
     # Save test data (by event)
     test_dir = os.path.join(nbm_dir, 'test_by_event')
     os.makedirs(test_dir, exist_ok=True)
-    
+   
     for event_id, data in test_data_scaled.items():
         event_file = os.path.join(test_dir, f'event_{event_id}.npz')
         np.savez(
@@ -484,8 +515,8 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
             event_end=str(data['event_end'])
         )
         print(f"  Event {event_id} ({data['label']:7s}): X={data['X'].shape}, y={data['y'].shape}")
-    
-    # Save metadata
+   
+    # FIXED: Define metadata early
     metadata = {
         'version': 2,
         'window_size': NBM_WINDOW_SIZE,
@@ -494,6 +525,7 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
         'feature_columns': feature_cols,
         'event_contributions': event_contributions,
         'test_events': {k: v['label'] for k, v in test_data_scaled.items()},
+        'val_events': {},  # Placeholder
         'filtering_criteria': {
             'status_type': NBM_NORMAL_STATUS,
             'min_wind_speed': NBM_CUT_IN_WIND_SPEED,
@@ -501,12 +533,316 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
         },
         'split_strategy': 'temporal_train_val_split_plus_prediction_test'
     }
-    
-    # metadata_path = os.path.join(nbm_dir, "nbm_metadata_v2.pkl")
-    metadata_path = os.path.join(nbm_dir, "nbm_metadata_7day.pkl")
+   
+    # NEW: Expand val to 3 pseudo-events (1 normal + 2 anomaly with noise)
+    val_dir = os.path.join(nbm_dir, 'val_by_event')
+    os.makedirs(val_dir, exist_ok=True)
 
+    chunk_size = max(1, len(X_val) // 6)  # Chunk 6 events
+    val_events_meta = {}
+    np.random.seed(42)
+    for i in range(6):
+        start = i * chunk_size
+        end = start + chunk_size if i < 5 else len(X_val)
+        
+        X_chunk = X_val[start:end].copy()
+        y_chunk = y_val[start:end]
+        
+        if i == 0:  # Normal pure
+            label = 'normal'
+            noise_std = 0.0
+        elif i == 1:  # Normal noisy (fake hard negative)
+            label = 'normal'
+            noise_std = 0.1  # Light noise for realistic normals
+        else:  # Anomaly levels (i=2-5)
+            label = 'anomaly'
+            noise_std = 0.2 + (i-1)*0.05  # Vary 0.2 to 0.4 for diversity
+        
+        noise = np.random.normal(0, noise_std, X_chunk.shape)
+        X_chunk += noise
+        
+        val_id = 999 + i
+        val_file = os.path.join(val_dir, f'event_{val_id}.npz')
+        np.savez(val_file, X=X_chunk, y=y_chunk, label=label)
+        print(f"  Val pseudo-event {val_id} ({label}, std={noise_std}): X={X_chunk.shape}, y={y_chunk.shape}")
+        
+        val_events_meta[val_id] = label
+
+    metadata['val_events'] = val_events_meta
+   
+    # Save metadata
+    metadata_path = os.path.join(nbm_dir, "nbm_metadata_7day.pkl")
     joblib.dump(metadata, metadata_path)
     print(f"\nMetadata saved to: {metadata_path}")
+
+
+def create_probe_sequences(data, window_size, stride):
+    sequences = []
+    
+    for i in range(0, len(data) - window_size + 1, stride):
+        seq = data[i:i + window_size].astype(np.float32)
+        sequences.append(seq)
+
+    return np.array(sequences, dtype=np.float32)
+
+
+def normalize_probe_data(X):
+    # X: (N, T, F), float32
+    mean = X.mean(axis=(0, 1), keepdims=True).astype(np.float32)
+    std  = X.std(axis=(0, 1), keepdims=True).astype(np.float32) + 1e-6
+
+    X_norm = (X - mean) / std
+    return X_norm, (mean, std)
+
+def build_probe_LSTM(input_shape):
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import LSTM, Dense, RepeatVector, TimeDistributed
+    from tensorflow.keras.initializers import GlorotUniform, Orthogonal
+    from tensorflow.keras.optimizers import Adam
+
+    kernel_init = GlorotUniform(seed=42)
+    recurrent_init = Orthogonal(seed=42)
+
+    model = Sequential([
+        LSTM(
+            64,
+            return_sequences=True,
+            input_shape=input_shape,
+            kernel_initializer=kernel_init,
+            recurrent_initializer=recurrent_init
+        ),
+        LSTM(
+            32,
+            return_sequences=False,
+            kernel_initializer=kernel_init,
+            recurrent_initializer=recurrent_init
+        ),
+        RepeatVector(input_shape[0]),
+        LSTM(
+            32,
+            return_sequences=True,
+            kernel_initializer=kernel_init,
+            recurrent_initializer=recurrent_init
+        ),
+        LSTM(
+            64,
+            return_sequences=True,
+            kernel_initializer=kernel_init,
+            recurrent_initializer=recurrent_init
+        ),
+        TimeDistributed(Dense(
+            input_shape[1],
+            kernel_initializer=kernel_init
+        ))
+    ])
+
+    from tensorflow.keras.optimizers import SGD
+
+    model.compile(
+        optimizer=SGD(learning_rate=1e-2, momentum=0.0),
+        loss="mae"
+    )
+    return model
+
+
+def subsample_for_probe(data, max_samples=3_000):
+    """
+    data: np.ndarray (T, F)
+    """
+    if len(data) <= max_samples:
+        return data
+
+    idx = np.linspace(0, len(data) - 1, max_samples, dtype=int)
+    return data[idx]
+
+def permutation_importance(model, X, feature_cols, model_pred):
+    model_error = np.mean(np.abs(model_pred - X), axis=(0, 1))
+    feat_importances = {}
+
+    for i, feat in enumerate(feature_cols):
+        rng = np.random.default_rng(42 + i)
+
+        X_permuted = X.copy()
+        perm_idx = rng.permutation(X.shape[1])  # permute time
+        X_permuted[:, perm_idx, i] = X[:, :, i]
+
+        pred = model.predict(X_permuted, batch_size=256, verbose=0)
+        permuted_error = np.mean(np.abs(pred - X_permuted), axis=(0, 1))
+
+        importance = float(np.mean(permuted_error - model_error))
+        feat_importances[feat] = importance
+
+    return feat_importances
+
+def error_sensitivity(model_pred, X, feature_cols):
+    recon = model_pred
+    errors = np.abs(recon - X)
+    sensitivity = {}
+    
+    for i, feat in enumerate(feature_cols):
+        mean_err = errors[:, :, i].mean()
+        std_err = errors[:, :, i].std()
+        sensitivity[feat] = mean_err + std_err
+    
+    return sensitivity
+
+def group_features(feature_cols):
+    groups = {}
+    for f in feature_cols:
+        key = f.split('_')[0]
+        groups.setdefault(key, []).append(f)
+    return groups
+ 
+def _to_scalar(x):
+    if isinstance(x, (list, tuple, np.ndarray)):
+        return float(np.mean(x))
+    return float(x)       
+
+def group_ablation_score(model, X, groups, feature_cols, model_pred):
+    """"""
+    recon = model_pred
+    base_errors = np.mean(np.abs(recon - X))
+    
+    group_score = {}
+    
+    for g_name, feats in groups.items():
+        idx = [i for i, f in enumerate(feature_cols) if f in feats]
+        
+        X_zero = X.copy()
+        X_zero[:, :, idx] = 0
+        
+        err_zero = np.mean(np.abs(model.predict(X_zero) - X_zero))
+        group_score[g_name] = err_zero - base_errors
+
+    return group_score
+
+def final_feature_selection_scores(perm, sens, group, feature_cols):
+    final_scores = {}
+
+    for f in feature_cols:
+        g = f.split('_')[0]
+
+        p = _to_scalar(perm.get(f, 0))
+        s = _to_scalar(sens.get(f, 0))
+        g_score = _to_scalar(group.get(g, 0))
+
+        final_scores[f] = (
+            0.5 * p +
+            0.3 * s +
+            0.2 * g_score
+        )
+
+    return final_scores
+
+
+def select_top_features(score_dict, top_k_ratio):
+    sorted_feats = sorted(score_dict.items(), key=lambda x: x[1], reverse=True)
+    k = int(len(sorted_feats) * top_k_ratio)
+    
+    return [f for f,_ in sorted_feats[:k]]
+
+        
+
+def model_based_feature_selection(
+    X_train: pd.DataFrame,
+    feature_cols: list,
+    window_size: int = NBM_WINDOW_SIZE,
+    stride: int = NBM_STRIDE,
+    probe_epochs: int = 10,
+    top_k_ratio: float = 0.4,
+    batch_size: int = 64,
+):
+    """
+    Model-based feature selection using a probe LSTM model.
+    FIXED: Full reproducibility with seeds and determinism.
+    """
+    # FIXED: Seed for this function (NumPy + TF)
+    np.random.seed(42)
+    import tensorflow as tf
+    tf.random.set_seed(42)
+    # FIXED: Strict determinism for TF ops (lock initializers, Adam noise)
+    tf.config.experimental.enable_op_determinism()  # Requires TF 2.9+, strict random lock
+    
+    print("[FS] Subsampling training data for probe model...")
+    X_train = subsample_for_probe(X_train, max_samples=12_000)
+    
+    print("[FS] Creating probe sequences...")
+    X = create_probe_sequences(X_train, window_size=window_size, stride=stride)
+    X, _ = normalize_probe_data(X)
+    
+    print("[FS] Building probe LSTM model...")
+    
+    # FIXED: Seed again before build (redundant for safety)
+    np.random.seed(42)
+    tf.random.set_seed(42)
+    
+    model = build_probe_LSTM((X.shape[1:]))
+    # FIXED: Explicit shuffle=False + seed in fit
+    model.fit(X, X, epochs=probe_epochs, batch_size=batch_size, verbose=1, shuffle=False)
+    
+    print("[FS] Model makes predictions for feature importance...")
+    model_pred = model.predict(X)
+    
+    print("[FS] Computing permutation feature importance...")
+    # FIXED: Seed before permutation loop
+    np.random.seed(42)
+    perm = permutation_importance(model, X, feature_cols, model_pred)
+    
+    print("[FS] Computing error sensitivity...")
+    sens = error_sensitivity(model_pred, X, feature_cols)
+    
+    print("[FS] Computing group ablation scores...")
+    groups = group_features(feature_cols)
+    group_score = group_ablation_score(model, X, groups, feature_cols, model_pred)
+    
+    print("[FS] Final feature scoring...")
+    scores = final_feature_selection_scores(perm, sens, group_score, feature_cols)
+    
+    selected_features = select_top_features(scores, top_k_ratio)
+    
+    print(f"[FS] Selected top {len(selected_features)} features out of {len(feature_cols)}:")
+    
+    return selected_features, scores, top_k_ratio
+    
+
+import json
+from pathlib import Path
+
+def export_feature_selection_json(
+    selected_features,
+    scores,
+    output_dir,
+    top_k_ratio
+):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_list = [
+        {
+            "feature": f,
+            "score": float(scores[f])
+        }
+        for f in selected_features
+    ]
+
+    export_data = {
+        "meta": {
+            "method": "model_based_feature_selection",
+            "top_k_ratio": top_k_ratio,
+            "num_total_features": len(scores),
+            "num_selected_features": len(selected_features)
+        },
+        "selected_features": selected_list,
+        "all_feature_scores": {
+            k: float(v) for k, v in scores.items()
+        }
+    }
+
+    out_path = output_dir / "model_based_feature_selection.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(export_data, f, indent=2)
+
+    print(f"[FS] Feature selection results saved to: {out_path}")
 
 
 def main():
@@ -529,7 +865,33 @@ def main():
         WIND_FARM_A_DATASETS,
         event_info
     )
-    
+    #==================================================================================#
+    # Model-based Feature Selection
+    print("Starting feature selection using model-based")
+
+    # FIXED: Copy to temp to avoid any potential mutation
+    train_data_temp = train_data.copy()  # np.copy() safe
+
+    selected_features, feature_scores, top_k_ratio = model_based_feature_selection(
+        train_data_temp,  # Use temp
+        feature_cols,
+        top_k_ratio=0.4,
+    )
+
+    # Export JSON (giữ nguyên)
+    export_feature_selection_json(
+        selected_features,
+        feature_scores,
+        output_dir=WIND_FARM_A_PROCESSED,
+        top_k_ratio=top_k_ratio
+    )
+
+    # Convert & select (giữ nguyên, train_data not mutated)
+    train_df_full = pd.DataFrame(train_data, columns=feature_cols)  # Use original train_data
+    train_data = train_df_full[selected_features].values
+    feature_cols = selected_features
+
+    #==================================================================================#
     # Temporal split for train/val
     train_split, val_split = temporal_split_train_val(train_data, val_ratio=0.15)
     

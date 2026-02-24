@@ -18,7 +18,7 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 
 # Wind Farm A specific paths
-WIND_FARM_A_DIR = os.path.join(RAW_DATA_DIR, "Wind Farm A")
+WIND_FARM_A_DIR = os.path.join(RAW_DATA_DIR, "Wind_Farm_A")
 WIND_FARM_A_DATASETS = os.path.join(WIND_FARM_A_DIR, "datasets")
 WIND_FARM_A_PROCESSED = os.path.join(PROCESSED_DATA_DIR, "Wind Farm A")
 
@@ -45,9 +45,9 @@ EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test']
 
 # NBM Window Configuration
 # nhun
-NBM_WINDOW_DAYS = 7  # Changed from 14 to 7 days
+NBM_WINDOW_DAYS = 3  # Changed from 14 to 7 days
 NBM_WINDOW_SIZE = int(NBM_WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 1008 timesteps (was 2016)
-NBM_STRIDE = 36  # 6 hours stride (was 72 - 12 hours)
+NBM_STRIDE = 72  # 6 hours stride (was 72 - 12 hours)
 # Normal Data Filtering Criteria
 NBM_CUT_IN_WIND_SPEED = 4.0  # m/s
 NBM_MIN_POWER = 0.0  # kW
