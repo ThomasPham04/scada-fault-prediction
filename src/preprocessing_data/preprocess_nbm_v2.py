@@ -467,6 +467,38 @@ def save_nbm_data_v2(X_train, X_val, y_train, y_val, test_data_scaled,
     print(f"  X_val: {X_val.shape}")
     print(f"  y_train: {y_train.shape}")
     print(f"  y_val: {y_val.shape}")
+    
+    train_dir = os.path.join(nbm_dir, 'train_by_event')
+    os.makedirs(train_dir, exist_ok=True)
+
+    n_train_events = 10
+    chunk_size = max(1, len(X_train) // n_train_events)
+
+    train_events_meta = {}
+
+    for i in range(n_train_events):
+        start = i * chunk_size
+        end = start + chunk_size if i < n_train_events - 1 else len(X_train)
+
+        X_chunk = X_train[start:end]
+        y_chunk = y_train[start:end]
+
+        train_event_id = 1000 + i
+        train_file = os.path.join(train_dir, f'event_{train_event_id}.npz')
+
+        np.savez(
+            train_file,
+            X=X_chunk,
+            y=y_chunk,
+            label='normal'
+        )
+
+        train_events_meta[train_event_id] = 'normal'
+
+        print(
+            f"  Train event {train_event_id} (normal): "
+            f"X={X_chunk.shape}, y={y_chunk.shape}"
+        )
    
     # Save test data (by event)
     test_dir = os.path.join(nbm_dir, 'test_by_event')

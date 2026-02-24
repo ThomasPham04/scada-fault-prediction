@@ -93,7 +93,7 @@ def compute_event_scores(model, events):
 def determine_threshold(
     model,
     val_events,
-    test_events,
+    train_events,
     min_recall=0.7,
     smoothing_window=3,
     iqr_multiplier=1.5
@@ -129,11 +129,11 @@ def determine_threshold(
     # 2. IQR threshold (NORMAL ONLY)
     # ======================================================
     print("\n[Threshold] Calculating IQR using NORMAL validation events only...")
-    test_scores, test_labels, _ = compute_event_scores(model, test_events)
-    test_scores = np.asarray(test_scores)
-    test_labels = np.asarray(test_labels)  # 0 = normal, 1 = anomaly
+    train_scores, train_labels, _ = compute_event_scores(model, train_events)
+    train_scores = np.asarray(train_scores)
+    train_labels = np.asarray(train_labels)  # 0 = normal, 1 = anomaly
     
-    normal_scores = test_scores[test_labels == 0]
+    normal_scores = train_scores[train_labels == 0]
     if len(normal_scores) >= 4:
         Q1 = np.percentile(normal_scores, 25)
         Q3 = np.percentile(normal_scores, 75)
@@ -423,7 +423,7 @@ def evaluate(model, test_events, upper_threshold, lower_threshold, min_recall=0.
         c=colors,
         s=90,
         alpha=0.8,
-        label='Event p95 MAE'
+        label='_nolegend_'
     )
 
     # Adaptive threshold per event (line + marker)
@@ -450,7 +450,21 @@ def evaluate(model, test_events, upper_threshold, lower_threshold, min_recall=0.
     plt.xlabel("Event ID")
     plt.ylabel("MAE")
     plt.title("Event-level p95 MAE vs Adaptive / Global Thresholds")
-    plt.legend()
+    from matplotlib.lines import Line2D
+
+    # Legend elements for event types
+    event_legend = [
+        Line2D([0], [0], marker='o', color='w',
+            label='Anomaly Event',
+            markerfacecolor='red', markersize=10),
+        Line2D([0], [0], marker='o', color='w',
+            label='Normal Event',
+            markerfacecolor='blue', markersize=10)
+    ]
+    plt.legend(
+        handles=event_legend + plt.gca().get_legend_handles_labels()[0],
+        loc='best'
+    )
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
@@ -475,6 +489,7 @@ def main():
     print("  Model loaded successfully!")
     
     # Load Val & Test Data
+    train_events = load_events('train')
     val_events = load_events('val')
     test_events = load_events('test')
     
@@ -486,7 +501,7 @@ def main():
         return
         
     # Optimize Threshold (min_recall=0.7, adjust if needed; smoothing=5 for robustness)
-    upper_th, lower_th = determine_threshold(model, val_events, test_events, min_recall=0.7, smoothing_window=5)
+    upper_th, lower_th = determine_threshold(model, val_events, train_events, min_recall=0.7, smoothing_window=5)
     if upper_th is None:
         return
         
