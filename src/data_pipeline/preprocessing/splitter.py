@@ -11,8 +11,6 @@ import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from config import (
-    NBM_CUT_IN_WIND_SPEED,
-    NBM_MIN_POWER,
     NBM_WINDOW_SIZE,
 )
 from data_pipeline.loaders import load_event_data
@@ -33,8 +31,6 @@ def process_all_events_train(
     Process TRAIN data from ALL events using CARE methodology.
 
     For each event:
-      - Take train_test == 'train' portion
-      - Filter: status_type_id == 0, wind > 4 m/s, power > 0 kW
       - Combine all into one large training array
 
     Args:
@@ -65,12 +61,7 @@ def process_all_events_train(
                 print(f"  Event {event_id} ({event_label}): No train data")
                 continue
 
-            mask = (
-                (df_train['status_type_id'] == 0) &
-                (df_train['wind_speed_3_avg'] > NBM_CUT_IN_WIND_SPEED) &
-                (df_train['power_29_avg'] > NBM_MIN_POWER)
-            )
-            df_normal = df_train[mask].copy()
+            df_normal = df_train.copy()
 
             if len(df_normal) < NBM_WINDOW_SIZE + 1:
                 print(
