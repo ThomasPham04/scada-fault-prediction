@@ -18,9 +18,13 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 
 # Wind Farm A specific paths
-WIND_FARM_A_DIR = os.path.join(RAW_DATA_DIR, "Wind_Farm_A")
+WIND_FARM_A_DIR = os.path.join(RAW_DATA_DIR, "Wind Farm A")
 WIND_FARM_A_DATASETS = os.path.join(WIND_FARM_A_DIR, "datasets")
 WIND_FARM_A_PROCESSED = os.path.join(PROCESSED_DATA_DIR, "Wind Farm A")
+NBM_PROCESSED_DIR = os.path.join(WIND_FARM_A_PROCESSED, "NBM_7day")
+
+# Experiment outputs
+EXPERIMENTS_DIR = os.path.join(BASE_DIR, "experiments")
 
 # =============================================================================
 # DATA PARAMETERS

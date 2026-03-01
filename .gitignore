@@ -8,8 +8,7 @@ analyze_data.py
 *zip
 question_for_gpt.txt
 redo/
-read/ 
-Notebook/
+read/
 prediction_results/
 scada
 script.txt
@@ -22,11 +21,10 @@ task.md
 *.pdf
 check/
 results/
-models/
+/models/
 report/ 
 planning/ 
 *png
-docs/
 *.svg
 .cursor/
 src/analysis/
@@ -35,3 +33,4 @@ evaluate/
 src/model/tf_env_312/
 src/preprocessing_data/tf_env_312/
 tf_env_312/
+fault_detector_model/
