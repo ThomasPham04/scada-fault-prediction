@@ -21,7 +21,8 @@ RESULTS_DIR = os.path.join(BASE_DIR, "results")
 WIND_FARM_A_DIR = os.path.join(RAW_DATA_DIR, "Wind Farm A")
 WIND_FARM_A_DATASETS = os.path.join(WIND_FARM_A_DIR, "datasets")
 WIND_FARM_A_PROCESSED = os.path.join(PROCESSED_DATA_DIR, "Wind Farm A")
-NBM_PROCESSED_DIR = os.path.join(WIND_FARM_A_PROCESSED, "NBM_7day")
+PER_ASSET_PROCESSED_DIR = os.path.join(WIND_FARM_A_PROCESSED, "per_asset")  # per-turbine pipeline
+
 
 # Experiment outputs
 EXPERIMENTS_DIR = os.path.join(BASE_DIR, "experiments")
@@ -44,21 +45,20 @@ SEQUENCE_LENGTH = int(PREDICTION_WINDOW_HOURS * 60 / TIME_RESOLUTION)
 EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test']
 
 # =============================================================================
-# NORMAL BEHAVIOR MODEL (NBM) PARAMETERS
+# NORMAL BEHAVIOR MODEL PARAMETERS
 # =============================================================================
 
-# NBM Window Configuration
-# nhun
-NBM_WINDOW_DAYS = 3  # Changed from 14 to 7 days
-NBM_WINDOW_SIZE = int(NBM_WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 1008 timesteps (was 2016)
-NBM_STRIDE = 72  # 6 hours stride (was 72 - 12 hours)
+#  Window Configuration
+WINDOW_DAYS = 3  
+WINDOW_SIZE = int(WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 1008 timesteps
+STRIDE = 72  # 6 hours stride 
 # Normal Data Filtering Criteria
-NBM_CUT_IN_WIND_SPEED = 4.0  # m/s
-NBM_MIN_POWER = 0.0  # kW
-NBM_NORMAL_STATUS = [0]  # Only status_type == 0 (normal operation)
+CUT_IN_WIND_SPEED = 4.0  # m/s
+MIN_POWER = 0.0  # kW
+NORMAL_STATUS = [0, 2]  # Choose 0 and 2 status type for normal operation
 
-# Feature Groups for NBM
-NBM_TEMPERATURE_FEATURES = [
+# Feature Groups for 
+TEMPERATURE_FEATURES = [
     'sensor_0_avg',   # Ambient temperature
     'sensor_6_avg',   # Hub controller temp
     'sensor_7_avg',   # Nacelle controller temp
@@ -86,7 +86,7 @@ NBM_TEMPERATURE_FEATURES = [
     'sensor_53_avg',  # Nose cone temperature
 ]
 
-NBM_RPM_FEATURES = [
+RPM_FEATURES = [
     'sensor_18_avg',  # Generator RPM
     'sensor_18_max',
     'sensor_18_min',
@@ -97,7 +97,7 @@ NBM_RPM_FEATURES = [
     'sensor_52_std',
 ]
 
-NBM_ELECTRICAL_FEATURES = [
+ELECTRICAL_FEATURES = [
     'sensor_23_avg',  # Current L1
     'sensor_24_avg',  # Current L2
     'sensor_25_avg',  # Current L3
@@ -108,7 +108,7 @@ NBM_ELECTRICAL_FEATURES = [
     'sensor_22_avg',  # Phase displacement
 ]
 
-NBM_WIND_POWER_FEATURES = [
+WIND_POWER_FEATURES = [
     'wind_speed_3_avg',
     'wind_speed_3_max',
     'wind_speed_3_min',
@@ -137,7 +137,7 @@ NBM_WIND_POWER_FEATURES = [
 ]
 
 # Angle features (will be converted to sin/cos)
-NBM_ANGLE_FEATURES = [
+ANGLE_FEATURES = [
     'sensor_1_avg',   # Wind absolute direction
     'sensor_2_avg',   # Wind relative direction
     'sensor_5_avg',   # Pitch angle
@@ -147,13 +147,13 @@ NBM_ANGLE_FEATURES = [
     'sensor_42_avg',  # Nacelle direction
 ]
 
-# Cumulative energy features (will be DROPPED - not useful for NBM)
+# Cumulative energy features (will be DROPPED - not useful for )
 # These features are in Wh (Watt-hour) and VArh (Volt-Ampere reactive hour) units,
 # representing cumulative energy rather than instantaneous measurements.
-# NBM requires real-time state indicators, not accumulated counters.
+#  requires real-time state indicators, not accumulated counters.
 # We already have instantaneous power features: power_29, power_30, sensor_31 (kW, kVAr)
 # NOTE: These sensors don't have '_avg' suffix in the CSV files
-NBM_COUNTER_FEATURES = [
+COUNTER_FEATURES = [
     'sensor_44',  # Active power - generator disconnected (Wh)
     'sensor_45',  # Active power - generator delta (Wh)
     'sensor_46',  # Active power - generator star (Wh)
@@ -165,11 +165,11 @@ NBM_COUNTER_FEATURES = [
 ]
 
 # Combine all feature groups (excluding angles and counters - will be processed separately)
-NBM_FEATURE_COLUMNS = (
-    NBM_TEMPERATURE_FEATURES +
-    NBM_RPM_FEATURES +
-    NBM_ELECTRICAL_FEATURES +
-    NBM_WIND_POWER_FEATURES
+FEATURE_COLUMNS = (
+    TEMPERATURE_FEATURES +
+    RPM_FEATURES +
+    ELECTRICAL_FEATURES +
+    WIND_POWER_FEATURES
 )
 
 # =============================================================================
@@ -181,25 +181,15 @@ RANDOM_SEED = 42
 TEST_SIZE = 0.15
 VAL_SIZE = 0.15
 
-# LSTM Model
-LSTM_UNITS_1 = 64
-LSTM_UNITS_2 = 32
+# LSTM Prediction Model
+LSTM_UNITS_1 = 128
+LSTM_UNITS_2 = 64
 DROPOUT_RATE = 0.2
-DENSE_UNITS = 16
-LEARNING_RATE = 0.001
-BATCH_SIZE = 32
-EPOCHS = 50
-EARLY_STOPPING_PATIENCE = 10
-
-# NBM LSTM Prediction Model
-NBM_LSTM_UNITS_1 = 128
-NBM_LSTM_UNITS_2 = 64
-NBM_DROPOUT_RATE = 0.2
-NBM_DENSE_UNITS = 64
-NBM_LEARNING_RATE = 0.0001
-NBM_BATCH_SIZE = 32
-NBM_EPOCHS = 30
-NBM_EARLY_STOPPING_PATIENCE = 5
+DENSE_UNITS = 64
+LEARNING_RATE = 0.0001
+BATCH_SIZE = 128
+EPOCHS = 20
+EARLY_STOPPING_PATIENCE = 5
 
 # =============================================================================
 # HELPER FUNCTIONS

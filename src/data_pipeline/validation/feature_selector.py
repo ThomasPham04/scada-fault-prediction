@@ -11,7 +11,7 @@ import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from config import NBM_WINDOW_SIZE, NBM_STRIDE
+from config import WINDOW_SIZE, STRIDE
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +146,8 @@ def select_top_features(score_dict: dict, top_k_ratio: float) -> list:
 def model_based_feature_selection(
     X_train: np.ndarray,
     feature_cols: list,
-    window_size: int = NBM_WINDOW_SIZE,
-    stride: int = NBM_STRIDE,
+    window_size: int = WINDOW_SIZE,
+    stride: int = STRIDE,
     probe_epochs: int = 10,
     top_k_ratio: float = 0.4,
     batch_size: int = 64,
