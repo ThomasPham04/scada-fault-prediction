@@ -51,7 +51,7 @@ EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test']
 #  Window Configuration
 WINDOW_DAYS = 3  
 WINDOW_SIZE = int(WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 1008 timesteps
-STRIDE = 72  # 6 hours stride 
+STRIDE = 6  # 1 hour stride 
 # Normal Data Filtering Criteria
 CUT_IN_WIND_SPEED = 4.0  # m/s
 MIN_POWER = 0.0  # kW

@@ -18,6 +18,7 @@ Usage:
 
 import os
 import sys
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import joblib
 
@@ -95,7 +96,7 @@ class PerAssetPipeline:
             )
         print(f"  Saved {len(test_data_scaled)} test events → {test_dir}")
 
-    def run(self) -> dict:
+    def run(self, asset_filter: Optional[List[str]] = None) -> dict:
         """
         Execute the full per-asset pipeline for all assets.
 
@@ -110,6 +111,12 @@ class PerAssetPipeline:
         event_info = self._event_loader.load_event_info()
         splitter   = DataSplitter(datasets_dir=self.datasets_dir, event_info=event_info)
         asset_groups = splitter.group_events_by_asset()
+
+        if asset_filter:
+            asset_groups = {str(k): v for k, v in asset_groups.items() if str(k) in [str(af) for af in asset_filter]}
+            if not asset_groups:
+                print(f"  [ERROR] No assets found matching the filter: {asset_filter}")
+                return {}
 
         summary = {}
 

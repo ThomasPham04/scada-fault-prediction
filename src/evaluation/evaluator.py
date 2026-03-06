@@ -262,7 +262,7 @@ class LSTMEvaluator:
     # Per-asset evaluation
     # ------------------------------------------------------------------
 
-    def evaluate_per_asset(self, asset_filter: list = None) -> None:
+    def evaluate_per_asset(self, asset_filter: list = None, use_adaptive: bool = False) -> None:
         """
         Per-asset evaluation: load each asset's LSTM and report per-event MAE.
 
@@ -283,6 +283,9 @@ class LSTMEvaluator:
         if not asset_dirs:
             print(f"[ERROR] No per-asset data found at: {self.per_asset_dir}")
             return
+
+        print(f"\nEvaluating with adaptive={use_adaptive}")
+        TP = FP = TN = FN = 0
 
         # Apply asset filter if specified
         if asset_filter is not None:
@@ -326,7 +329,7 @@ class LSTMEvaluator:
                 else:
                     threshold = 0.5
             
-            print(f"  Asset {asset_id} — Auto Threshold (val p95) = {threshold:.5f}")
+            print(f"  Asset {asset_id} — Auto Threshold (val p85) = {threshold:.5f}")
 
             # 2. Evaluate on Test Events
             test_dir    = os.path.join(asset_dir, "test_by_event")
@@ -353,27 +356,38 @@ class LSTMEvaluator:
                     global_anomaly_scores.append((timestamp, float(mae[i])))
 
                 mean_mae  = float(np.mean(mae))
-                event_p95 = float(np.percentile(mae, 85))
+                event_p85 = float(np.percentile(mae, 85))
                 
-                # Simple detection logic based on the threshold
-                outlier_ratio = float(np.mean(mae > threshold))
-                detected      = (outlier_ratio >= 0.15) or (event_p95 > threshold * 1.2)
+                # Decision logic
+                current_threshold = threshold
+                if use_adaptive:
+                    current_threshold += 0.45 * np.std(mae)
+
+                outlier_ratio = float(np.mean(mae > current_threshold))
+                detected      = bool((outlier_ratio >= 0.15) or (event_p85 > threshold * 1.2))
                 
                 is_anomaly = (label == "anomaly")
-                correct    = (detected == is_anomaly)
+                correct    = bool(detected == is_anomaly)
+
+                if is_anomaly and detected: TP += 1
+                elif is_anomaly and not detected: FN += 1
+                elif not is_anomaly and detected: FP += 1
+                else: TN += 1
 
                 print(f"    Event {event_id:>4s} ({label:7s}): "
                       f"pred={'anomaly' if detected else 'normal ':7s}  "
                       f"{'OK' if correct else 'MISS'}  "
                       f"outlier_rate={outlier_ratio:.1%}  "
-                      f"mean_MAE={mean_mae:.5f}  p95_MAE={event_p95:.5f}")
+                      f"mean_MAE={mean_mae:.5f}  p85_MAE={event_p85:.5f}")
                 
                 all_results.append({
                     "asset_id": asset_id, "event_id": event_id,
                     "label": label, "n_samples": len(X),
-                    "mean_mae": mean_mae, "p95_mae": event_p95,
-                    "threshold": float(threshold), "outlier_ratio": outlier_ratio,
-                    "detected": bool(detected), "correct": bool(correct),
+                    "mean_mae": mean_mae, "p85_mae": event_p85,
+                    "threshold": float(current_threshold),
+                    "outlier_ratio": outlier_ratio,
+                    "detected": bool(detected),
+                    "correct": correct
                 })
 
         if not all_results:
@@ -399,6 +413,21 @@ class LSTMEvaluator:
         normal_mae  = [r["mean_mae"] for r in all_results if r["label"] == "normal"]
         if anomaly_mae and normal_mae:
             print(f"Avg MAE  anomaly={np.mean(anomaly_mae):.5f}  normal={np.mean(normal_mae):.5f}")
+
+        # Summary Metrics
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+        recall    = TP / (TP + FN) if (TP + FN) > 0 else 0
+        f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        accuracy  = (TP + TN) / (TP + FP + TN + FN) if (TP + FP + TN + FN) > 0 else 0
+        
+        print("\n" + "=" * 50)
+        print("LSTM PER-ASSET SUMMARY")
+        print("=" * 50)
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall:    {recall:.4f}")
+        print(f"F1 Score:  {f1:.4f}")
+        print(f"Accuracy:  {accuracy:.4f} ({TP+TN}/{TP+FP+TN+FN})")
+        print("=" * 50)
 
 
 # ===========================================================================
@@ -522,7 +551,7 @@ class TreeEvaluator:
             "TP": TP, "FP": FP, "TN": TN, "FN": FN, "events": results,
         }
 
-    def evaluate_per_asset(self, model_name: str, use_stats: bool = False) -> None:
+    def evaluate_per_asset(self, model_name: str, use_stats: bool = False, use_adaptive: bool = False) -> None:
         """
         Per-asset tree model evaluation.
 
@@ -546,6 +575,8 @@ class TreeEvaluator:
             print(f"[ERROR] No per-asset data found at: {self.per_asset_dir}")
             return
 
+        print(f"\nEvaluating {prefix.upper()} with adaptive={use_adaptive}")
+        TP = FP = TN = FN = 0
         all_results = []
         for asset_dir in asset_dirs:
             asset_id   = os.path.basename(asset_dir).replace("asset_", "")
@@ -572,15 +603,29 @@ class TreeEvaluator:
 
                 X_flat    = fn(X_seq)
                 proba     = model.predict_proba(X_flat)[:, 1]
-                y_pred_seq = (proba >= threshold).astype(int)
-                event_pred = int(y_pred_seq.mean() >= 0.5)
-                correct    = event_pred == y_true_bin
+                
+                # Decision logic
+                current_threshold = threshold
+                if use_adaptive:
+                    current_threshold += 0.45 * np.std(proba)
+
+                event_p85     = float(np.percentile(proba, 85))
+                outlier_ratio = float(np.mean(proba > current_threshold))
+                
+                # Using same hybrid trigger as LSTM for consistency
+                event_pred = bool((outlier_ratio >= 0.15) or (event_p85 > threshold * 1.2))
+                correct    = bool(event_pred == y_true_bin)
+
+                if y_true_bin == 1 and event_pred: TP += 1
+                elif y_true_bin == 1 and not event_pred: FN += 1
+                elif y_true_bin == 0 and event_pred: FP += 1
+                else: TN += 1
 
                 print(
                     f"    Event {event_id:>4s} ({label:7s}): "
                     f"pred={'anomaly' if event_pred else 'normal ':7s}  "
                     f"{'OK' if correct else 'MISS'}  "
-                    f"seq_anom_rate={y_pred_seq.mean():.2%}"
+                    f"outlier_rate={outlier_ratio:.2%}"
                 )
                 all_results.append({
                     "asset_id": asset_id, "event_id": event_id, "label": label,
@@ -597,11 +642,23 @@ class TreeEvaluator:
         out_path = os.path.join(results_dir, f"{prefix}_per_asset_eval.json")
         with open(out_path, "w") as f:
             json.dump(all_results, f, indent=2)
-        n_correct = sum(1 for r in all_results if r["correct"])
-        print(f"\nResults saved: {out_path}")
+            
+        # Summary Metrics
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+        recall    = TP / (TP + FN) if (TP + FN) > 0 else 0
+        f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        accuracy  = (TP + TN) / (TP + FP + TN + FN) if (TP + FP + TN + FN) > 0 else 0
+
+        print("\n" + "=" * 50)
+        print(f"{prefix.upper()} PER-ASSET SUMMARY")
+        print("=" * 50)
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall:    {recall:.4f}")
+        print(f"F1 Score:  {f1:.4f}")
+        print(f"Accuracy:  {accuracy:.4f} ({TP+TN}/{TP+FP+TN+FN})")
+        print("=" * 50)
         print(
-            f"Event-level accuracy: {n_correct}/{len(all_results)} "
-            f"= {n_correct/len(all_results):.2%}"
+            f"Event-level accuracy: {accuracy:.2%}"
         )
 
     def compare_models(self, model_results: dict) -> None:

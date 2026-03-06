@@ -20,7 +20,7 @@ Usage examples:
     python src/main.py train --model lstm --csv "D:/Data/turbine_01.csv"
 
     # 3. Evaluate models
-    python src/main.py evaluate --model lstm
+    python src/main.py evaluate --model lstm --asset 
     python src/main.py evaluate --model random_forest
     python src/main.py evaluate --model both      # xgboost + random_forest
 
@@ -85,7 +85,8 @@ def run_prepare(args) -> None:
         print("=" * 70)
         print("STAGE 1 — Prepare Per-Asset Data")
         print("=" * 70)
-        pipeline.run()
+        asset_filter = getattr(args, "assets", None)
+        pipeline.run(asset_filter=asset_filter)
 
 
 def run_train(args) -> None:
@@ -148,7 +149,7 @@ def run_evaluate(args) -> None:
         print("\n" + "=" * 70)
         print("EVALUATION — LSTM")
         print("=" * 70)
-        LSTMEvaluator().evaluate_per_asset(asset_filter=asset_filter)
+        LSTMEvaluator().evaluate_per_asset(asset_filter=asset_filter, use_adaptive=args.adaptive)
 
     tree_models = []
     if model in ("random_forest", "rf", "both", "all"):
@@ -160,7 +161,7 @@ def run_evaluate(args) -> None:
         print("\n" + "=" * 70)
         print(f"EVALUATION — {mk.upper()}")
         print("=" * 70)
-        TreeEvaluator().evaluate_per_asset(mk, use_stats=args.use_stats)
+        TreeEvaluator().evaluate_per_asset(mk, use_stats=args.use_stats, use_adaptive=args.adaptive)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Restrict to specific asset IDs/names. E.g. --assets 10 11")
         p.add_argument("--use_stats", action="store_true",
                        help="Use statistical window features for tree models.")
+        p.add_argument("--adaptive", action="store_true",
+                       help="Use adaptive thresholding (hybrid trigger) during evaluation.")
 
     # ---- shared hyperparameter flags ----
     def add_hparams(p):
@@ -222,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     prep_p = sub.add_parser("prepare",
                              help="Prepare per-asset training data. "
                                   "Use --csv to process a single file.")
+    add_common(prep_p)
     add_csv_flags(prep_p)
 
     # ---- train ----

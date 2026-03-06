@@ -249,6 +249,15 @@ class TreeTrainer:
             print("[ERROR] No per-asset data found. Run prepare_per_asset first.")
             return
 
+        assets_filter = getattr(args, "assets", None)
+        if assets_filter:
+            filter_set = {str(a) for a in assets_filter}
+            asset_dirs = [d for d in asset_dirs if os.path.basename(d).replace("asset_", "") in filter_set]
+            if not asset_dirs:
+                print(f"[ERROR] No data found for requested assets: {assets_filter}")
+                return
+            print(f"Training only assets: {assets_filter}")
+
         results_root = os.path.join(self.results_dir, "per_asset")
         os.makedirs(results_root, exist_ok=True)
 
