@@ -1,36 +1,68 @@
+# ==============================================================================
+# Dataset & Data Files
+# ==============================================================================
 Dataset/
+prediction_results/
 *.npy
 *.csv
-test.py
-tf_env/
-analyze_data.py
 *.h5
-*zip
-question_for_gpt.txt
-redo/
-read/
-prediction_results/
-scada
+*.zip
+
+# ==============================================================================
+# Models & Experiment Results
+# ==============================================================================
+/models/
+fault_detector_model/
+results/
+output*
+
+# ==============================================================================
+# Development Scratch & Temporary Files
+# ==============================================================================
+test.py
+analyze_data.py
 script.txt
+question_for_gpt.txt
 scada_preprocess_early_warning_sharded.py
 train_lstm_early_warning.py
 ver2.py
-output*
-*.ipynb
-task.md
-*.pdf
+scada
+redo/
+read/
 check/
-results/
-/models/
-report/ 
-planning/ 
-*png
-*.svg
-.cursor/
-src/analysis/
-src/utils/
 evaluate/
+task.md
+
+# ==============================================================================
+# Notebooks
+# ==============================================================================
+*.ipynb
+
+# ==============================================================================
+# Docs & Reports
+# ==============================================================================
+*.pdf
+*.png
+*.svg
+report/
+planning/
+
+# ==============================================================================
+# Virtual Environments
+# ==============================================================================
+tf_env/
+tf_env_312/
 src/model/tf_env_312/
 src/preprocessing_data/tf_env_312/
-tf_env_312/
-fault_detector_model/
+
+# ==============================================================================
+# IDE & Tools
+# ==============================================================================
+.cursor/
+
+# ==============================================================================
+# Project-specific Ignored Directories
+# ==============================================================================
+src/analysis/
+src/utils/
+ref_project/

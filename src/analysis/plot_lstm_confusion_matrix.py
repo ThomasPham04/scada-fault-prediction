@@ -14,7 +14,7 @@ from config import RESULTS_DIR
 
 def main():
     # Load results
-    results_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'lstm_test_evaluation.json')
+    results_path = os.path.join(RESULTS_DIR, 'global', 'lstm_test_evaluation.json')
     if not os.path.exists(results_path):
         print(f"Error: Results file not found: {results_path}")
         return
@@ -65,7 +65,7 @@ def main():
     )
     # plt.figtext(0.5, 0.01, metrics_text, wrap=True, horizontalalignment='center', fontsize=10)
     
-    output_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'lstm_confusion_matrix.png')
+    output_path = os.path.join(RESULTS_DIR, 'global', 'lstm_confusion_matrix.png')
     plt.tight_layout(rect=[0, 0.1, 1, 1]) # Make room for text
     plt.savefig(output_path, dpi=300)
     print(f"Confusion matrix saved to: {output_path}")

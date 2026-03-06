@@ -25,8 +25,8 @@ from config import WIND_FARM_A_PROCESSED, MODELS_DIR, RESULTS_DIR
 # ---------------------------------------------------------------------------
 
 def load_events(data_split: str = 'test') -> dict:
-    """Load per-event NPZ files from NBM_7day/{data_split}_by_event/."""
-    nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'NBM_7day')
+    """Load per-event NPZ files from global/{data_split}_by_event/."""
+    nbm_dir = os.path.join(WIND_FARM_A_PROCESSED, 'global')
     split_dir = os.path.join(nbm_dir, f'{data_split}_by_event')
     events = {}
 
@@ -173,7 +173,7 @@ def determine_threshold(
     print(f"  PR @ chosen: Prec={best_prec:.4f}, Rec={best_rec:.4f}, F1={best_f1:.4f}")
 
     # Save
-    output_path = os.path.join(RESULTS_DIR, 'NBM_7day', 'val_detailed.json')
+    output_path = os.path.join(RESULTS_DIR, 'global', 'val_detailed.json')
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
         json.dump({
@@ -201,7 +201,7 @@ def main() -> None:
     print("NBM LSTM — Threshold Tuning")
     print("=" * 80)
 
-    model_path = os.path.join(MODELS_DIR, 'nbm_lstm_7day.keras')
+    model_path = os.path.join(MODELS_DIR, 'lstm_global.keras')
     if not os.path.exists(model_path):
         print(f"Error: Model not found at {model_path}")
         print("Run training first: python -m src.training.scripts.train_nbm")
