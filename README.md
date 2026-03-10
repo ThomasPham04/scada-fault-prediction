@@ -1,77 +1,68 @@
-# scada-fault-prediction
+﻿# SCADA Fault Prediction
 
-Deep Learning Model for Predicting Equipment Failures Using SCADA Data
-Description
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange.svg)](https://www.tensorflow.org/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-1.x-green.svg)](https://xgboost.readthedocs.io/)
 
-This project focuses on applying deep learning models to predict industrial equipment failures using data collected from SCADA (Supervisory Control and Data Acquisition) systems.
-SCADA datasets contain rich sensor signals — such as pressure, temperature, voltage, current, and flow rate — which can be leveraged to detect early signs of abnormal behavior. Early prediction helps prevent production downtime and significantly reduces maintenance costs.
+> Deep learning and machine learning pipeline for predicting equipment failures from SCADA data.
 
-Project Requirements
+## Description
+This project applies sequence modeling and classical ML to industrial SCADA (Supervisory Control and Data Acquisition) signals such as pressure, temperature, voltage, current, and flow rate. The goal is early detection of abnormal behavior to reduce downtime and maintenance cost.
 
-1. Literature Review
+## Key Features
+- Single CLI entry point via `src/main.py` for data preparation, training, and evaluation.
+- Data preprocessing for missing values, standardization, and feature extraction.
+- Multiple model families: deep sequence models and tree-based classifiers.
+- Evaluation metrics: Precision, Recall, F1-Score, RMSE, and log-loss.
 
-Study the characteristics of SCADA data and review deep learning techniques commonly used for time-series modeling, including:
-
-RNN, LSTM, GRU
-
-CNN and Hybrid CNN–LSTM architectures
-
-1. Data Collection & Preprocessing
-
-Prepare SCADA datasets by:
-
-Cleaning and normalizing sensor variables
-
-Handling missing or corrupted data
-
-Extracting meaningful features for model input
-
-1. Model Development
-
-Implement and evaluate multiple deep learning architectures such as:
-
-LSTM / GRU for sequential time-series forecasting
-
-CNN or CNN–LSTM hybrids for learning complex temporal–spatial patterns
-
-1. Model Training & Evaluation
-
-Train models using real or simulated SCADA datasets, and evaluate performance using metrics like:
-
-Precision
-
-Recall
-
-F1-Score
-
-RMSE (Root Mean Square Error)
-
-1. Practical Application
-
-Develop a prototype system capable of:
-
-Real-time failure prediction
-
-Early-warning notifications
-
-Integration into industrial monitoring dashboards
+## Models Implemented
+1. LSTM / GRU: stacked recurrent networks for time-series prediction.
+2. AutoDecoder: reconstruction-based anomaly detection.
+3. XGBoost: gradient-boosted decision trees.
+4. Random Forest: ensemble classifier for robust performance.
 
 ## Dataset Setup
+Place raw SCADA data in the default location (Wind Farm A):
 
-To ensure the scripts can locate and process your data correctly, you need to place the raw SCADA dataset in the correct folder structure.
-
-By default, the project expects the raw data for **Wind Farm A** to be located at:
-`Dataset/raw/Wind Farm A/datasets/`
-
-If these directories do not exist, please create them at the root of the project. Your folder structure should look like this:
-
-```text
+```
 scada-fault-prediction/
-└── Dataset/
-    └── raw/
-        └── Wind Farm A/
-            └── datasets/
-                ├── <Your raw SCADA CSV files should go here>
+├── Dataset/
+│   └── raw/
+│       └── Wind Farm A/
+│           └── datasets/
+│               └── <raw SCADA CSV files>
 ```
 
-**Note:** When you run the data preprocessing scripts, the processed outputs will be automatically saved to the `Dataset/processed/` directory.
+Processed outputs are written to `Dataset/processed/`.
+
+## Usage
+The project uses `src/main.py` for all pipeline stages.
+
+### 1. Data Preparation
+```bash
+# Prepare per-asset data (full Wind Farm A dataset)
+python src/main.py prepare
+
+# Prepare directly from a single CSV file
+python src/main.py prepare --csv <path_to_csv>
+```
+
+### 2. Model Training
+```bash
+# Train the LSTM model on the first 10 assets
+python src/main.py train --model lstm --assets 10
+
+# Train all available architectures on a specific asset
+python src/main.py train --model all --asset-ids WT_18
+```
+
+### 3. Evaluation
+```bash
+# Evaluate a trained Random Forest model on 10 assets
+python src/main.py evaluate --model random_forest --assets 10
+```
+
+## Practical Application Target
+- Real-time failure prediction from live SCADA streams.
+- Early-warning notifications for maintenance engineers.
+- Integration into industrial monitoring dashboards.
