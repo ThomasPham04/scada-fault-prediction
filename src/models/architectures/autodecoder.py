@@ -18,25 +18,18 @@ from tensorflow.keras import layers, Model
 
 class AutoDecoderModel:
     """
-    Skeleton class for an AutoDecoder (or AutoEncoder-style) architecture.
-    
-    The user will implement the encoder/decoder logic here.
-    
     Args:
         input_shape: Tuple (window_size, n_features).
         latent_dim:  Dimensionality of the latent representation.
-        # Add other hyperparameters as needed
     """
 
     def __init__(
         self,
         input_shape: tuple,
         latent_dim: int = 32,
-        # Define other parameters here
     ) -> None:
         self.input_shape = input_shape
         self.latent_dim = latent_dim
-        # Initialize other variables here
 
     def build(self) -> Model:
         """
@@ -46,17 +39,17 @@ class AutoDecoderModel:
             Compiled Keras Model.
         """
         # 1. Define inputs
-        # inputs = layers.Input(shape=self.input_shape)
+        inputs = layers.Input(shape=self.input_shape)
 
         # 2. Implement ARCHITECTURE (Encoder/Decoder)
-        # x = ...
+        x = ...
         
         # 3. Define outputs
-        # outputs = ...
+        outputs = ...
 
         # 4. Construct and Compile
-        # model = Model(inputs=inputs, outputs=outputs, name='AutoDecoder')
-        # model.compile(...)
+        model = Model(inputs=inputs, outputs=outputs, name='AutoDecoder')
+        model.compile(...)
         
         # Placeholder return
         return None
