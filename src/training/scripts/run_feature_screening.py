@@ -27,16 +27,17 @@ import pandas as pd
 
 from config import PROCESSED_DATA_DIR, RESULTS_DIR, WIND_FARM_A_DATASETS
 from data_pipeline.preprocessing.feature_screening import FeatureScreening
-
-
-DROP_COLUMNS = {
-    "time_stamp",
-    "asset_id",
-    "train_test",
-    "status_type_id",
-    "sequence_id",
-    "id",
-}
+from training.hyperparameters.feature_screening_defaults import (
+    DEFAULT_ALPHA,
+    DEFAULT_COMBINED_CSV_SEP,
+    DEFAULT_FF_THRESHOLD,
+    DEFAULT_MIN_MEAN_ABS_PB_R,
+    DEFAULT_MIN_PB_SIG_RATIO,
+    DEFAULT_MIN_PB_SIGN_CONSISTENCY,
+    DEFAULT_SAMPLE_PER_FILE,
+    DEFAULT_TARGET_COL,
+    DROP_COLUMNS,
+)
 
 
 def split_combined_csv(combined_csv: str | Path, splits_dir: str | Path) -> Path:
@@ -107,14 +108,14 @@ def parse_args() -> argparse.Namespace:
         metavar="DIR",
         help="Output directory for screening results.",
     )
-    parser.add_argument("--sep", type=str, default=",")
-    parser.add_argument("--target-col", type=str, default="label")
-    parser.add_argument("--alpha", type=float, default=0.05)
-    parser.add_argument("--min-mean-abs-pb-r", type=float, default=0.05)
-    parser.add_argument("--min-pb-sign-consistency", type=float, default=0.60)
-    parser.add_argument("--min-pb-sig-ratio", type=float, default=0.30)
-    parser.add_argument("--ff-threshold", type=float, default=0.85)
-    parser.add_argument("--sample-per-file", type=int, default=10_000)
+    parser.add_argument("--sep", type=str, default=DEFAULT_COMBINED_CSV_SEP)
+    parser.add_argument("--target-col", type=str, default=DEFAULT_TARGET_COL)
+    parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
+    parser.add_argument("--min-mean-abs-pb-r", type=float, default=DEFAULT_MIN_MEAN_ABS_PB_R)
+    parser.add_argument("--min-pb-sign-consistency", type=float, default=DEFAULT_MIN_PB_SIGN_CONSISTENCY)
+    parser.add_argument("--min-pb-sig-ratio", type=float, default=DEFAULT_MIN_PB_SIG_RATIO)
+    parser.add_argument("--ff-threshold", type=float, default=DEFAULT_FF_THRESHOLD)
+    parser.add_argument("--sample-per-file", type=int, default=DEFAULT_SAMPLE_PER_FILE)
     return parser.parse_args()
 
 

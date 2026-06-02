@@ -6,20 +6,27 @@ Consolidates duplicated evaluate_binary / find_best_threshold helpers.
 
 import numpy as np
 
+from training.hyperparameters.tree_defaults import (
+    DEFAULT_DECISION_THRESHOLD,
+    DEFAULT_THRESHOLD_GRID_START,
+    DEFAULT_THRESHOLD_GRID_STEPS,
+    DEFAULT_THRESHOLD_GRID_STOP,
+)
+
 
 class MetricsCalculator:
     """
     Computes binary classification metrics for anomaly detection.
 
     Works on sample-level probability scores produced by XGBoost /
-    Random Forest, as well as the LSTM MAE anomaly signal.
+    Random Forest.
     """
 
     def evaluate_binary(
         self,
         y_true: np.ndarray,
         y_pred_proba: np.ndarray,
-        threshold: float = 0.5,
+        threshold: float = DEFAULT_DECISION_THRESHOLD,
     ) -> dict:
         """
         Compute classification metrics at a given decision threshold.
@@ -59,7 +66,7 @@ class MetricsCalculator:
         self,
         y_true: np.ndarray,
         y_proba: np.ndarray,
-        n_steps: int = 200,
+        n_steps: int = DEFAULT_THRESHOLD_GRID_STEPS,
     ) -> float:
         """
         Grid-search the threshold that maximises F1 on a validation set.
@@ -72,8 +79,12 @@ class MetricsCalculator:
         Returns:
             Best threshold (float).
         """
-        best_f1, best_t = 0.0, 0.5
-        for t in np.linspace(0.05, 0.95, n_steps):
+        best_f1, best_t = 0.0, DEFAULT_DECISION_THRESHOLD
+        for t in np.linspace(
+            DEFAULT_THRESHOLD_GRID_START,
+            DEFAULT_THRESHOLD_GRID_STOP,
+            n_steps,
+        ):
             m = self.evaluate_binary(y_true, y_proba, t)
             if m["f1"] > best_f1:
                 best_f1, best_t = m["f1"], float(t)

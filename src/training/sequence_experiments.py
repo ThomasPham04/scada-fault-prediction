@@ -9,6 +9,11 @@ from pathlib import Path
 
 import numpy as np
 
+from training.hyperparameters.classifier_defaults import (
+    CLASSIFIER_THRESHOLD_GRID_POINTS,
+    CLASSIFIER_THRESHOLD_GRID_START,
+    CLASSIFIER_THRESHOLD_GRID_STOP,
+)
 from training.sequence_metrics import (
     aggregate_event_scores,
     compute_class_weights,
@@ -113,7 +118,11 @@ def run_classifier_experiment(
     val_scores = best_model.predict(X_val, batch_size=batch_size, verbose=0).reshape(-1)
     test_scores = best_model.predict(X_test, batch_size=batch_size, verbose=0).reshape(-1)
 
-    threshold_grid = np.linspace(0.0, 1.0, 1001)
+    threshold_grid = np.linspace(
+        CLASSIFIER_THRESHOLD_GRID_START,
+        CLASSIFIER_THRESHOLD_GRID_STOP,
+        CLASSIFIER_THRESHOLD_GRID_POINTS,
+    )
     val_meta = bundle["val_meta"]
     sweep_df = sweep_thresholds(y_val, val_scores, threshold_grid)
     threshold_source = "validation_f1_sweep"

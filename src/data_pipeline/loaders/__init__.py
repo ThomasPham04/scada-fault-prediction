@@ -1,13 +1,8 @@
-"""Loaders sub-package: sequence creation and tabular feature loading."""
-from .sequence_maker import create_sequences, create_probe_sequences
-from .tabular_loader import load_event_npz, compute_scale_pos_weight
-from .event_loader import load_event_info, load_event_data
+"""Loaders for raw CARE events and retained tree-model baselines."""
+from .event_loader import EventLoader
+from .tabular_loader import TabularLoader
 
 __all__ = [
-    "create_sequences",
-    "create_probe_sequences",
-    "load_event_npz",
-    "compute_scale_pos_weight",
-    "load_event_info",
-    "load_event_data",
+    "EventLoader",
+    "TabularLoader",
 ]

@@ -1,9 +1,20 @@
 """
 Configuration file for SCADA Fault Prediction project.
-Contains all paths, hyperparameters, and constants.
+Contains repository paths, feature groups, and active sequence defaults.
 """
 
 import os
+
+from training.hyperparameters.sequence_defaults import (
+    INPUT_WINDOW_HOURS,
+    NORMAL_STATUS,
+    PREDICTION_HORIZON_STEPS,
+    RANDOM_SEED,
+    SEQUENCE_LENGTH,
+    STRIDE,
+    TIME_RESOLUTION,
+    VAL_SIZE,
+)
 
 # =============================================================================
 # PATHS
@@ -31,13 +42,7 @@ EXPERIMENTS_DIR = os.path.join(BASE_DIR, "experiments")
 # DATA PARAMETERS
 # =============================================================================
 
-# Time resolution (in minutes)
-TIME_RESOLUTION = 10
-
-# Classifier sequence defaults
-INPUT_WINDOW_HOURS = 24                                          # input window size
-PREDICTION_HORIZON_STEPS = 72                                    # 72 × 10 min = 12 h ahead
-SEQUENCE_LENGTH = int(INPUT_WINDOW_HOURS * 60 / TIME_RESOLUTION) # 144 timesteps
+# Training and sequence defaults are imported from training.hyperparameters.
 
 # Features to exclude (non-sensor columns)
 EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test', 'sequence_id', 'label']
@@ -46,16 +51,7 @@ EXCLUDE_COLUMNS = ['time_stamp', 'asset_id', 'id', 'train_test', 'sequence_id', 
 # NORMAL BEHAVIOR MODEL PARAMETERS
 # =============================================================================
 
-#  Window Configuration
-WINDOW_DAYS = 3  
-WINDOW_SIZE = int(WINDOW_DAYS * 24 * 60 / TIME_RESOLUTION)  # 1008 timesteps
-STRIDE = 6  # 1 hour stride 
-# Normal Data Filtering Criteria
-CUT_IN_WIND_SPEED = 4.0  # m/s
-MIN_POWER = 0.0  # kW
-NORMAL_STATUS = [0, 2]  # Choose 0 and 2 status type for normal operation
-
-# Feature Groups for 
+# Feature Groups
 TEMPERATURE_FEATURES = [
     'sensor_0_avg',   # Ambient temperature
     'sensor_6_avg',   # Hub controller temp
@@ -172,25 +168,6 @@ FEATURE_COLUMNS = (
 )
 
 # =============================================================================
-# MODEL HYPERPARAMETERS
-# =============================================================================
-
-# General
-RANDOM_SEED = 42
-TEST_SIZE = 0.15
-VAL_SIZE = 0.15
-
-# LSTM Prediction Model
-LSTM_UNITS_1 = 128
-LSTM_UNITS_2 = 64
-DROPOUT_RATE = 0.2
-DENSE_UNITS = 64
-LEARNING_RATE = 0.0001
-BATCH_SIZE = 128
-EPOCHS = 20
-EARLY_STOPPING_PATIENCE = 5
-
-# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -216,9 +193,9 @@ if __name__ == "__main__":
     print(f"Processed Data Directory: {PROCESSED_DATA_DIR}")
     print(f"Models Directory: {MODELS_DIR}")
     print(f"Results Directory: {RESULTS_DIR}")
-    print(f"\nSequence Length: {SEQUENCE_LENGTH} timesteps ({PREDICTION_WINDOW_HOURS} hours)")
+    print(f"\nSequence Length: {SEQUENCE_LENGTH} timesteps ({INPUT_WINDOW_HOURS} hours)")
     print(f"Random Seed: {RANDOM_SEED}")
-    
+
     # Ensure directories exist
     ensure_dirs()
     print("\nDirectories created/verified successfully!")

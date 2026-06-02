@@ -42,16 +42,19 @@ SRC_DIR = Path(__file__).resolve().parents[2]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from config import MODELS_DIR, RESULTS_DIR, TIME_RESOLUTION  # noqa: E402
+from config import MODELS_DIR, RESULTS_DIR  # noqa: E402
 from data_pipeline.preprocessing.feature_engineering import FeatureEngineer  # noqa: E402
+from training.hyperparameters.inference_defaults import (  # noqa: E402
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_STRIDE_STEPS,
+    DEFAULT_THRESHOLD,
+    DEFAULT_WINDOW_HOURS,
+)
+from training.hyperparameters.sequence_defaults import TIME_RESOLUTION  # noqa: E402
 
 
 DEFAULT_MODEL_PATH = Path(MODELS_DIR) / "CNN_GRU" / "model.keras"
 DEFAULT_FEATURE_FILE = Path(RESULTS_DIR) / "results" / "final_features.csv"
-DEFAULT_WINDOW_HOURS = 36
-DEFAULT_STRIDE_STEPS = 6
-DEFAULT_THRESHOLD = 0.50
-
 _FEATURE_ENGINEER = FeatureEngineer()
 
 
@@ -360,7 +363,7 @@ def run_cnn_gru_inference_from_array(
     model_path: str | Path = DEFAULT_MODEL_PATH,
     threshold: float | None = None,
     threshold_path: str | Path | None = None,
-    batch_size: int = 256,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> pd.DataFrame:
     """
     Run inference on an already-built 3D sequence array.
@@ -437,7 +440,7 @@ def run_cnn_gru_inference_from_dataframe(
     scaler_dir: str | Path | None = None,
     scaler=None,
     scaler_map: dict[int, object] | None = None,
-    batch_size: int = 256,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> dict[str, object]:
     """
     Full DataFrame-to-prediction inference pipeline for the saved CNN-GRU model.

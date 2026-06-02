@@ -5,7 +5,7 @@ for tree-based models (XGBoost, Random Forest).
 
 Tree models cannot use raw 3D sequences (N, window, features), so this
 class flattens (N, W, F) → (N, W*F) and assembles train/test datasets
-from the global/ directory produced by the LSTM data pipeline.
+from sequence exports.
 """
 
 from __future__ import annotations
@@ -183,39 +183,3 @@ class TabularLoader:
             except Exception:
                 pass
         return labels
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible module-level aliases
-# ---------------------------------------------------------------------------
-
-def flatten_sequences(X: np.ndarray) -> np.ndarray:
-    """Legacy alias."""
-    return TabularLoader().flatten_sequences(X)
-
-
-def compute_statistical_features(X: np.ndarray) -> np.ndarray:
-    """Legacy alias."""
-    return TabularLoader().compute_statistical_features(X)
-
-
-def load_event_npz(
-    split: str,
-    data_dir: Optional[str] = None,
-    use_stats: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, List[int], List[str]]:
-    """Legacy alias."""
-    return TabularLoader(data_dir=data_dir, use_stats=use_stats).load_event_npz(split)
-
-
-def compute_scale_pos_weight(y: np.ndarray) -> float:
-    """Legacy alias."""
-    return TabularLoader().compute_scale_pos_weight(y)
-
-
-def event_level_labels(
-    data_dir: Optional[str] = None,
-    split: str = "test",
-) -> Dict[int, str]:
-    """Legacy alias."""
-    return TabularLoader(data_dir=data_dir).event_level_labels(split)

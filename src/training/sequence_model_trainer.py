@@ -12,7 +12,21 @@ import gc
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from config import PROCESSED_DATA_DIR, RANDOM_SEED, RESULTS_DIR
+from config import PROCESSED_DATA_DIR, RESULTS_DIR
+from training.hyperparameters.classifier_defaults import (
+    CLASSIFIER_LOSSES,
+    DEFAULT_CLASSIFIER_BATCH_SIZE,
+    DEFAULT_CLASSIFIER_DROPOUT,
+    DEFAULT_CLASSIFIER_EPOCHS,
+    DEFAULT_CLASSIFIER_FOCAL_ALPHA,
+    DEFAULT_CLASSIFIER_FOCAL_GAMMA,
+    DEFAULT_CLASSIFIER_L2,
+    DEFAULT_CLASSIFIER_LEARNING_RATE,
+    DEFAULT_CLASSIFIER_LOSS,
+    DEFAULT_CLASSIFIER_MODELS,
+    DEFAULT_SEQUENCE_WINDOWS,
+)
+from training.hyperparameters.sequence_defaults import RANDOM_SEED
 from training.sequence_experiments import (
     run_classifier_experiment,
 )
@@ -27,10 +41,6 @@ from training.sequence_utils import (
     save_json,
     set_random_seed,
 )
-
-
-DEFAULT_SEQUENCE_WINDOWS = [24]
-DEFAULT_CLASSIFIER_MODELS = ["lstm", "gru", "cnn_lstm", "cnn_gru"]
 
 
 def _as_path(path: str | Path) -> Path:
@@ -52,14 +62,14 @@ class SequenceTrainingConfig:
     random_seed: int = RANDOM_SEED
     overwrite: bool = False
     save_predictions: bool = True
-    classifier_epochs: int = 25
-    classifier_batch_size: int = 256
-    classifier_learning_rate: float = 1e-3
-    classifier_dropout: float | None = None
-    classifier_l2: float = 0.0
-    classifier_loss: str = "binary_crossentropy"
-    classifier_focal_gamma: float = 2.0
-    classifier_focal_alpha: float = 0.75
+    classifier_epochs: int = DEFAULT_CLASSIFIER_EPOCHS
+    classifier_batch_size: int = DEFAULT_CLASSIFIER_BATCH_SIZE
+    classifier_learning_rate: float = DEFAULT_CLASSIFIER_LEARNING_RATE
+    classifier_dropout: float | None = DEFAULT_CLASSIFIER_DROPOUT
+    classifier_l2: float = DEFAULT_CLASSIFIER_L2
+    classifier_loss: str = DEFAULT_CLASSIFIER_LOSS
+    classifier_focal_gamma: float = DEFAULT_CLASSIFIER_FOCAL_GAMMA
+    classifier_focal_alpha: float = DEFAULT_CLASSIFIER_FOCAL_ALPHA
 
     def __post_init__(self) -> None:
         self.exports_dir = _as_path(self.exports_dir)
@@ -71,8 +81,8 @@ class SequenceTrainingConfig:
         self.classifier_loss = str(self.classifier_loss)
         self.classifier_focal_gamma = float(self.classifier_focal_gamma)
         self.classifier_focal_alpha = float(self.classifier_focal_alpha)
-        if self.classifier_loss not in {"binary_crossentropy", "focal"}:
-            raise ValueError("classifier_loss must be 'binary_crossentropy' or 'focal'")
+        if self.classifier_loss not in CLASSIFIER_LOSSES:
+            raise ValueError(f"classifier_loss must be one of {CLASSIFIER_LOSSES}")
 
 
 class SequenceModelTrainer:

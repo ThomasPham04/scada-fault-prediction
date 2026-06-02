@@ -8,19 +8,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sklearn.ensemble import RandomForestClassifier
-
-
-# Default hyperparameters
-RF_DEFAULTS = {
-    "n_estimators":      300,
-    "max_depth":         None,   # Grow fully by default
-    "min_samples_split": 2,
-    "min_samples_leaf":  1,
-    "max_features":      "sqrt", # Standard for classification
-    "class_weight":      "balanced",
-    "n_jobs":            -1,
-    "random_state":      42,
-}
+from training.hyperparameters.tree_defaults import RF_DEFAULTS
 
 
 class RandomForestModel:
@@ -78,7 +66,7 @@ class RandomForestModel:
             class_weight=self.class_weight,
             n_jobs=self.n_jobs,
             random_state=self.random_state,
-            verbose=0,
+            verbose=RF_DEFAULTS["verbose"],
         )
         depth_str = str(self.max_depth) if self.max_depth else "unlimited"
         print(
@@ -90,7 +78,7 @@ class RandomForestModel:
 
 
 # ---------------------------------------------------------------------------
-# Backward-compatible module-level alias
+# Module-level convenience alias
 # ---------------------------------------------------------------------------
 
 def build_random_forest_model(
@@ -103,7 +91,7 @@ def build_random_forest_model(
     n_jobs:            int = RF_DEFAULTS["n_jobs"],
     random_state:      int = RF_DEFAULTS["random_state"],
 ) -> RandomForestClassifier:
-    """Legacy alias — wraps RandomForestModel(...).build()."""
+    """Wrap RandomForestModel(...).build()."""
     return RandomForestModel(
         n_estimators=n_estimators, max_depth=max_depth,
         min_samples_split=min_samples_split, min_samples_leaf=min_samples_leaf,

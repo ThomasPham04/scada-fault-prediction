@@ -16,29 +16,38 @@ from typing import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-from config import (
-    INPUT_WINDOW_HOURS,
+from config import PROCESSED_DATA_DIR
+from training.hyperparameters.sequence_defaults import (
+    DEFAULT_LABEL_MODE,
+    DEFAULT_PREDICTION_VAL_RATIO,
+    DEFAULT_PROBE_BATCH_SIZE,
+    DEFAULT_PROBE_CALLBACK_MODE,
+    DEFAULT_PROBE_CALLBACK_MONITOR,
+    DEFAULT_PROBE_EARLY_STOPPING_PATIENCE,
+    DEFAULT_PROBE_EPOCHS,
+    DEFAULT_PROBE_GRU_UNITS,
+    DEFAULT_PROBE_INITIAL_THRESHOLD,
+    DEFAULT_PROBE_LEARNING_RATE,
+    DEFAULT_PROBE_LOSS,
+    DEFAULT_PROBE_MAX_TRAIN_WINDOWS,
+    DEFAULT_PROBE_THRESHOLD_START,
+    DEFAULT_PROBE_THRESHOLD_STEP,
+    DEFAULT_PROBE_THRESHOLD_STOP,
+    DEFAULT_SCALER_TYPE,
+    DEFAULT_SELECTED_WINDOWS_HOURS,
+    DEFAULT_TOP_K_WINDOWS,
+    DEFAULT_VALIDATION_SOURCE,
+    DEFAULT_WINDOW_CANDIDATES_HOURS,
     NORMAL_STATUS,
-    PREDICTION_HORIZON_STEPS as _DEFAULT_HORIZON_STEPS,
-    PROCESSED_DATA_DIR,
-    STRIDE,
+    PREDICTION_HORIZON_STEPS as DEFAULT_PREDICTION_HORIZON_STEPS,
+    RANDOM_SEED,
+    STRIDE as DEFAULT_STRIDE_STEPS,
     TIME_RESOLUTION,
     VAL_SIZE,
 )
 
-DEFAULT_SELECTED_WINDOWS_HOURS = [INPUT_WINDOW_HOURS]
-DEFAULT_WINDOW_CANDIDATES_HOURS = [INPUT_WINDOW_HOURS]
-DEFAULT_PREDICTION_HORIZON_STEPS = _DEFAULT_HORIZON_STEPS
-DEFAULT_STRIDE_STEPS = STRIDE
-
-
-DEFAULT_TOP_K_WINDOWS = 1
-DEFAULT_PROBE_EPOCHS = 8
-DEFAULT_PROBE_BATCH_SIZE = 256
-DEFAULT_PROBE_MAX_TRAIN_WINDOWS = 60_000
-DEFAULT_VALIDATION_SOURCE = "train_tail"
 VALIDATION_SOURCES = {"train_tail", "prediction"}
-LABEL_MODE_FUTURE_HORIZON = "future_horizon"
+LABEL_MODE_FUTURE_HORIZON = DEFAULT_LABEL_MODE
 LABEL_MODE_INPUT_WINDOW = "input_window"
 LABEL_MODE_ALIASES = {
     "future_horizon": LABEL_MODE_FUTURE_HORIZON,
@@ -122,15 +131,15 @@ class CombinedSequencePipeline:
         normal_statuses: Iterable[int] = NORMAL_STATUS,
         time_resolution_minutes: int = TIME_RESOLUTION,
         expected_feature_count: int | None = None,
-        scaler_type: str = "minmax",
+        scaler_type: str = DEFAULT_SCALER_TYPE,
         validation_source: str = DEFAULT_VALIDATION_SOURCE,
-        prediction_val_ratio: float = 0.5,
+        prediction_val_ratio: float = DEFAULT_PREDICTION_VAL_RATIO,
         label_mode: str = LABEL_MODE_FUTURE_HORIZON,
         run_window_search: bool = True,
         probe_epochs: int = DEFAULT_PROBE_EPOCHS,
         probe_batch_size: int = DEFAULT_PROBE_BATCH_SIZE,
         probe_max_train_windows: int = DEFAULT_PROBE_MAX_TRAIN_WINDOWS,
-        random_seed: int = 42,
+        random_seed: int = RANDOM_SEED,
         skip_classifier: bool = False,
     ) -> None:
         self.csv_path = Path(csv_path)
@@ -600,8 +609,12 @@ class CombinedSequencePipeline:
         )
 
         best_f1 = 0.0
-        best_threshold = 0.5
-        for threshold in np.arange(0.10, 0.91, 0.05):
+        best_threshold = DEFAULT_PROBE_INITIAL_THRESHOLD
+        for threshold in np.arange(
+            DEFAULT_PROBE_THRESHOLD_START,
+            DEFAULT_PROBE_THRESHOLD_STOP,
+            DEFAULT_PROBE_THRESHOLD_STEP,
+        ):
             predictions = (event_df["max_score"] >= threshold).astype(int)
             current_f1 = float(f1_score(event_df["true_label"], predictions, zero_division=0))
             if current_f1 > best_f1:
@@ -617,13 +630,15 @@ class CombinedSequencePipeline:
         model = tf.keras.Sequential(
             [
                 layers.Input(shape=input_shape),
-                layers.GRU(32),
+                layers.GRU(DEFAULT_PROBE_GRU_UNITS),
                 layers.Dense(1, activation="sigmoid"),
             ]
         )
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(),
-            loss="binary_crossentropy",
+            optimizer=tf.keras.optimizers.Adam(
+                learning_rate=DEFAULT_PROBE_LEARNING_RATE
+            ),
+            loss=DEFAULT_PROBE_LOSS,
             metrics=[
                 tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
                 tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
@@ -674,9 +689,9 @@ class CombinedSequencePipeline:
                 tf.random.set_seed(self.random_seed)
                 model = self.build_probe_model((window_steps, len(feature_cols)))
                 early_stop = callbacks.EarlyStopping(
-                    monitor="val_pr_auc",
-                    mode="max",
-                    patience=2,
+                    monitor=DEFAULT_PROBE_CALLBACK_MONITOR,
+                    mode=DEFAULT_PROBE_CALLBACK_MODE,
+                    patience=DEFAULT_PROBE_EARLY_STOPPING_PATIENCE,
                     restore_best_weights=True,
                     verbose=0,
                 )

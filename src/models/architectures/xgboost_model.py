@@ -11,24 +11,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # module file does not fail when xgboost is not installed.
 
 
-# Default hyperparameters — override via constructor arguments or config
-XGBOOST_DEFAULTS = {
-    "n_estimators":     400,
-    "max_depth":        6,
-    "learning_rate":    0.05,
-    "subsample":        0.8,
-    "colsample_bytree": 0.8,
-    "min_child_weight": 1.0,
-    "gamma":            0.0,
-    "reg_lambda":       1.0,
-    "reg_alpha":        0.0,
-    "objective":        "binary:logistic",
-    "eval_metric":      "logloss",
-    "tree_method":      "hist",
-    "n_jobs":           -1,
-    "verbosity":        1,
-    "random_state":     42,
-}
+from training.hyperparameters.tree_defaults import (
+    XGBOOST_DEFAULT_SCALE_POS_WEIGHT,
+    XGBOOST_DEFAULT_USE_GPU,
+    XGBOOST_DEFAULTS,
+)
 
 
 class XGBoostModel:
@@ -58,7 +45,7 @@ class XGBoostModel:
 
     def __init__(
         self,
-        scale_pos_weight: float = 1.0,
+        scale_pos_weight: float = XGBOOST_DEFAULT_SCALE_POS_WEIGHT,
         n_estimators:     int   = XGBOOST_DEFAULTS["n_estimators"],
         max_depth:        int   = XGBOOST_DEFAULTS["max_depth"],
         learning_rate:    float = XGBOOST_DEFAULTS["learning_rate"],
@@ -71,7 +58,7 @@ class XGBoostModel:
         tree_method:      str   = XGBOOST_DEFAULTS["tree_method"],
         n_jobs:           int   = XGBOOST_DEFAULTS["n_jobs"],
         random_state:     int   = XGBOOST_DEFAULTS["random_state"],
-        use_gpu:          bool  = False,
+        use_gpu:          bool  = XGBOOST_DEFAULT_USE_GPU,
     ) -> None:
         self.scale_pos_weight = scale_pos_weight
         self.n_estimators     = n_estimators
@@ -105,13 +92,13 @@ class XGBoostModel:
             gamma=self.gamma,
             reg_lambda=self.reg_lambda,
             reg_alpha=self.reg_alpha,
-            objective="binary:logistic",
-            eval_metric="logloss",
+            objective=XGBOOST_DEFAULTS["objective"],
+            eval_metric=XGBOOST_DEFAULTS["eval_metric"],
             n_jobs=self.n_jobs,
             scale_pos_weight=self.scale_pos_weight,
             tree_method=self.tree_method,
             random_state=self.random_state,
-            verbosity=1,
+            verbosity=XGBOOST_DEFAULTS["verbosity"],
         )
         print(
             f"[XGBoost] Model configured: {self.n_estimators} estimators, "
@@ -122,11 +109,11 @@ class XGBoostModel:
 
 
 # ---------------------------------------------------------------------------
-# Backward-compatible module-level alias
+# Module-level convenience alias
 # ---------------------------------------------------------------------------
 
 def build_xgboost_model(
-    scale_pos_weight: float = 1.0,
+    scale_pos_weight: float = XGBOOST_DEFAULT_SCALE_POS_WEIGHT,
     n_estimators:     int   = XGBOOST_DEFAULTS["n_estimators"],
     max_depth:        int   = XGBOOST_DEFAULTS["max_depth"],
     learning_rate:    float = XGBOOST_DEFAULTS["learning_rate"],
@@ -139,9 +126,9 @@ def build_xgboost_model(
     tree_method:      str   = XGBOOST_DEFAULTS["tree_method"],
     n_jobs:           int   = XGBOOST_DEFAULTS["n_jobs"],
     random_state:     int   = XGBOOST_DEFAULTS["random_state"],
-    use_gpu:          bool  = False,
+    use_gpu:          bool  = XGBOOST_DEFAULT_USE_GPU,
 ):
-    """Legacy alias — wraps XGBoostModel(...).build()."""
+    """Wrap XGBoostModel(...).build()."""
     return XGBoostModel(
         scale_pos_weight=scale_pos_weight,
         n_estimators=n_estimators, max_depth=max_depth,

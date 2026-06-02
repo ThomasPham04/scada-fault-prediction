@@ -1,7 +1,6 @@
-"""Evaluation package — exports the primary evaluator classes."""
-from .evaluator import LSTMEvaluator, TreeEvaluator
+"""Evaluation package for retained tree-model baselines."""
+from .evaluator import TreeEvaluator
 
 __all__ = [
-    "LSTMEvaluator",
     "TreeEvaluator",
 ]

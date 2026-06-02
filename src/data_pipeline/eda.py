@@ -37,6 +37,18 @@ _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from training.hyperparameters.feature_screening_defaults import (
+    DEFAULT_EDA_MAX_FEATURES,
+    DEFAULT_EDA_MAX_MISSING_PCT,
+    DEFAULT_EDA_MIN_CORR,
+    DEFAULT_EDA_REDUNDANCY_THRESHOLD,
+)
+from training.hyperparameters.sequence_defaults import (
+    PREDICTION_HORIZON_STEPS as DEFAULT_EDA_HORIZON_STEPS,
+    SEQUENCE_LENGTH as DEFAULT_EDA_WINDOW_STEPS,
+    STRIDE as DEFAULT_EDA_STRIDE_STEPS,
+)
+
 try:
     import seaborn as sns
     _HAS_SEABORN = True
@@ -47,11 +59,6 @@ except ImportError:
 META_COLUMNS = {
     "time_stamp", "asset_id", "sequence_id", "train_test", "status_type_id", "label",
 }
-DEFAULT_EDA_WINDOW_STEPS = 144
-DEFAULT_EDA_HORIZON_STEPS = 72
-DEFAULT_EDA_STRIDE_STEPS = 6
-
-
 def _resolve_feature_columns(df: pd.DataFrame, feature_file: str | None) -> list[str]:
     """Return numeric feature columns, optionally filtered by an external feature list."""
     if feature_file:
@@ -104,12 +111,12 @@ class EDAReport:
     csv_path: str | Path
     output_dir: str | Path
     feature_file: str | None = None
-    max_features: int = 30
+    max_features: int = DEFAULT_EDA_MAX_FEATURES
     sample_asset: int | None = None
     select_features: bool = False
-    min_corr: float = 0.02
-    max_missing_pct: float = 80.0
-    redundancy_threshold: float = 0.90
+    min_corr: float = DEFAULT_EDA_MIN_CORR
+    max_missing_pct: float = DEFAULT_EDA_MAX_MISSING_PCT
+    redundancy_threshold: float = DEFAULT_EDA_REDUNDANCY_THRESHOLD
 
     def __post_init__(self) -> None:
         self.csv_path = Path(self.csv_path)
@@ -417,25 +424,6 @@ class EDAReport:
         fig.savefig(self.output_dir / "time_series_overview.png", dpi=160)
         plt.close(fig)
 
-    def _plot_label_balance_legacy(self) -> None:
-        n_normal = int((self.df["label"] == 0).sum())
-        n_fault = int((self.df["label"] == 1).sum())
-        total = n_normal + n_fault
-        fig, ax = plt.subplots(figsize=(5.5, 4))
-        bars = ax.bar(["Normal", "Fault"], [n_normal, n_fault],
-                      color=["#4E79A7", "#E15759"])
-        for bar, value in zip(bars, [n_normal, n_fault]):
-            pct = value / max(total, 1) * 100
-            ax.text(bar.get_x() + bar.get_width() / 2, value,
-                    f"{value:,}\n({pct:.2f}%)",
-                    ha="center", va="bottom", fontsize=10)
-        ax.set_ylabel("Row count")
-        ax.set_title(f"Label balance — total {total:,} rows")
-        ax.grid(axis="y", alpha=0.25)
-        fig.tight_layout()
-        fig.savefig(self.output_dir / "label_balance.png", dpi=160)
-        plt.close(fig)
-
     def plot_label_balance(self) -> None:
         row_counts = self.df["label"].astype(int).value_counts().reindex([0, 1], fill_value=0)
 
@@ -563,7 +551,7 @@ class EDAReport:
         Select features from the full EDA statistics using four sequential filters:
           1. Drop constant features (std == 0)
           2. Drop features with missing_pct > max_missing_pct
-          3. Drop features with |Spearman ρ| < min_corr
+          3. Drop features with |Spearman rho| < min_corr
           4. Remove redundant pairs: among features with |inter-corr| > redundancy_threshold,
              keep the one with higher |label correlation|
 
@@ -762,16 +750,16 @@ def main() -> None:
     parser.add_argument("--csv", required=True, type=str, metavar="PATH")
     parser.add_argument("--output-dir", type=str, default=None, metavar="DIR")
     parser.add_argument("--feature-file", type=str, default=None, metavar="PATH")
-    parser.add_argument("--max-features", type=int, default=30, metavar="N")
+    parser.add_argument("--max-features", type=int, default=DEFAULT_EDA_MAX_FEATURES, metavar="N")
     parser.add_argument("--sample-asset", type=int, default=None, metavar="ID")
     parser.add_argument("--select-features", action="store_true",
                         help="Run EDA-based feature selection and output selected features.")
-    parser.add_argument("--min-corr", type=float, default=0.02, metavar="F",
-                        help="Minimum |Spearman ρ| with label to keep a feature (default 0.02).")
-    parser.add_argument("--max-missing-pct", type=float, default=80.0, metavar="F",
+    parser.add_argument("--min-corr", type=float, default=DEFAULT_EDA_MIN_CORR, metavar="F",
+                        help="Minimum |Spearman rho| with label to keep a feature (default 0.02).")
+    parser.add_argument("--max-missing-pct", type=float, default=DEFAULT_EDA_MAX_MISSING_PCT, metavar="F",
                         help="Drop features with missing %% above this threshold (default 80).")
-    parser.add_argument("--redundancy-threshold", type=float, default=0.90, metavar="F",
-                        help="Inter-feature |Spearman ρ| above which weaker feature is dropped (default 0.90).")
+    parser.add_argument("--redundancy-threshold", type=float, default=DEFAULT_EDA_REDUNDANCY_THRESHOLD, metavar="F",
+                        help="Inter-feature |Spearman rho| above which weaker feature is dropped (default 0.90).")
     args = parser.parse_args()
 
     csv_path = Path(args.csv)

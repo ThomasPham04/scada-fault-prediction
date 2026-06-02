@@ -1,1 +1,1 @@
-"""Hyperparameters sub-package: config-driven HPO helpers."""
+"""Central source of truth for training, screening, and inference defaults."""

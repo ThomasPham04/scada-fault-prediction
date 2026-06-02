@@ -21,9 +21,20 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from config import PROCESSED_DATA_DIR, RESULTS_DIR  # noqa: E402
-
-DEFAULT_SEQUENCE_WINDOWS = [24]
-DEFAULT_CLASSIFIER_MODELS = ["lstm", "gru", "cnn_lstm", "cnn_gru"]
+from training.hyperparameters.classifier_defaults import (  # noqa: E402
+    CLASSIFIER_LOSSES,
+    DEFAULT_CLASSIFIER_BATCH_SIZE,
+    DEFAULT_CLASSIFIER_DROPOUT,
+    DEFAULT_CLASSIFIER_EPOCHS,
+    DEFAULT_CLASSIFIER_FOCAL_ALPHA,
+    DEFAULT_CLASSIFIER_FOCAL_GAMMA,
+    DEFAULT_CLASSIFIER_L2,
+    DEFAULT_CLASSIFIER_LEARNING_RATE,
+    DEFAULT_CLASSIFIER_LOSS,
+    DEFAULT_CLASSIFIER_MODELS,
+    DEFAULT_SEQUENCE_WINDOWS,
+)
+from training.hyperparameters.sequence_defaults import RANDOM_SEED  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,11 +61,17 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CLASSIFIER_MODELS,
         choices=DEFAULT_CLASSIFIER_MODELS,
     )
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=RANDOM_SEED)
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--no-save-predictions", action="store_true")
-    ap.add_argument("--classifier-epochs", type=int, default=25)
-    ap.add_argument("--classifier-batch-size", type=int, default=256)
+    ap.add_argument("--classifier-epochs", type=int, default=DEFAULT_CLASSIFIER_EPOCHS)
+    ap.add_argument("--classifier-batch-size", type=int, default=DEFAULT_CLASSIFIER_BATCH_SIZE)
+    ap.add_argument("--classifier-learning-rate", type=float, default=DEFAULT_CLASSIFIER_LEARNING_RATE)
+    ap.add_argument("--classifier-dropout", type=float, default=DEFAULT_CLASSIFIER_DROPOUT)
+    ap.add_argument("--classifier-l2", type=float, default=DEFAULT_CLASSIFIER_L2)
+    ap.add_argument("--classifier-loss", type=str, default=DEFAULT_CLASSIFIER_LOSS, choices=CLASSIFIER_LOSSES)
+    ap.add_argument("--classifier-focal-gamma", type=float, default=DEFAULT_CLASSIFIER_FOCAL_GAMMA)
+    ap.add_argument("--classifier-focal-alpha", type=float, default=DEFAULT_CLASSIFIER_FOCAL_ALPHA)
     return ap.parse_args()
 
 
@@ -72,6 +89,12 @@ def main() -> None:
         save_predictions=not args.no_save_predictions,
         classifier_epochs=args.classifier_epochs,
         classifier_batch_size=args.classifier_batch_size,
+        classifier_learning_rate=args.classifier_learning_rate,
+        classifier_dropout=args.classifier_dropout,
+        classifier_l2=args.classifier_l2,
+        classifier_loss=args.classifier_loss,
+        classifier_focal_gamma=args.classifier_focal_gamma,
+        classifier_focal_alpha=args.classifier_focal_alpha,
     )
     SequenceModelTrainer(config).run()
 

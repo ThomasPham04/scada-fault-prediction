@@ -111,22 +111,3 @@ class GroundTruth:
             f"LabelRule=status_type_id!=0 OR anomaly prediction segment | "
             f"Normal={n_normal:,}  Fault={n_fault:,}  Total={len(labels):,}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Module-level convenience functions
-# ---------------------------------------------------------------------------
-
-def make_labels(df: pd.DataFrame, event_id: int, event_info: pd.DataFrame) -> pd.Series:
-    """Module-level alias for GroundTruth.make_labels()."""
-    return GroundTruth(event_info).make_labels(df, event_id)
-
-
-def make_normal_index(df: pd.DataFrame, event_id: int, event_info: pd.DataFrame) -> pd.Series:
-    """Module-level alias for GroundTruth.make_normal_index()."""
-    return GroundTruth(event_info).make_normal_index(df, event_id)
-
-
-def add_label_column(df: pd.DataFrame, event_id: int, event_info: pd.DataFrame) -> pd.DataFrame:
-    """Module-level alias for GroundTruth.add_label_column()."""
-    return GroundTruth(event_info).add_label_column(df, event_id)

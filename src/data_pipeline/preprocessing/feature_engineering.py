@@ -218,51 +218,13 @@ class FeatureEngineer:
         """Return output feature names from the most recent angle transformation."""
         return self.feature_names_out_
 
-    def engineer_angle_features_wrapped(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Legacy helper for the previous project-specific behaviour.
-
-        Unlike ``engineer_angle_features``, this always wraps every configured
-        angle into [-180, 180) before conversion and never drops invalid ranges.
-        """
-        df = df.copy()
-
-        for col in self.angles:
-            if col not in df.columns:
-                continue
-
-            wrapped = self.wrap_angle_deg(df[col])
-            radians = np.radians(wrapped)
-            df[f"{col}_sin"] = np.sin(radians)
-            df[f"{col}_cos"] = np.cos(radians)
-
-        if "sensor_2_avg" in df.columns:
-            relative_direction = self.wrap_angle_deg(df["sensor_2_avg"])
-            df["yaw_misalignment_abs"] = relative_direction.abs()
-
-        raw_angle_columns = [col for col in self.angles if col in df.columns]
-        if raw_angle_columns:
-            df.drop(columns=raw_angle_columns, inplace=True)
-
-        return df
-
-    def drop_counter_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Legacy-named helper retained for backward compatibility.
-
-        No additional columns are dropped here anymore. The only columns that
-        should be excluded are the explicit metadata/id columns handled
-        elsewhere via DROP_COLUMNS / EXCLUDE_COLUMNS.
-        """
-        return df.copy()
-
     def get_feature_columns(self, df: pd.DataFrame) -> list:
         """
         Determine the final feature column list after angle engineering.
         Includes base sensor features plus the sin/cos engineered columns.
 
         Args:
-            df: DataFrame after engineer_angle_features and drop_counter_features.
+            df: DataFrame after engineer_angle_features.
 
         Returns:
             Ordered list of feature column names to use for modelling.
@@ -315,30 +277,3 @@ class FeatureEngineer:
             .apply(lambda part: part.ffill().bfill().fillna(0.0))
         )
         return df
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible module-level aliases
-# ---------------------------------------------------------------------------
-
-_engineer = FeatureEngineer()
-
-
-def engineer_angle_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Legacy alias."""
-    return _engineer.engineer_angle_features(df)
-
-
-def drop_counter_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Legacy alias."""
-    return _engineer.drop_counter_features(df)
-
-
-def get_feature_columns(df: pd.DataFrame) -> list:
-    """Legacy alias."""
-    return _engineer.get_feature_columns(df)
-
-
-def preprocess_features(df: pd.DataFrame, feature_cols: list) -> np.ndarray:
-    """Legacy alias."""
-    return _engineer.preprocess_features(df, feature_cols)

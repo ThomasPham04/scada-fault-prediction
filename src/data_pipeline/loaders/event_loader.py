@@ -54,19 +54,3 @@ class EventLoader:
         df = pd.read_csv(path, sep=";")
         df["time_stamp"] = pd.to_datetime(df["time_stamp"])
         return df
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible module-level aliases
-# ---------------------------------------------------------------------------
-
-def load_event_info(farm_dir: str) -> pd.DataFrame:
-    """Legacy alias — wraps EventLoader.load_event_info()."""
-    loader = EventLoader(farm_dir=farm_dir, datasets_dir="")
-    return loader.load_event_info()
-
-
-def load_event_data(event_id: int, datasets_dir: str) -> pd.DataFrame:
-    """Legacy alias — wraps EventLoader.load_event_data()."""
-    loader = EventLoader(farm_dir="", datasets_dir=datasets_dir)
-    return loader.load_event_data(event_id)

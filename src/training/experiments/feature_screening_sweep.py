@@ -27,16 +27,17 @@ if ROOT not in sys.path:
 
 from config import RESULTS_DIR, WIND_FARM_A_DATASETS
 from data_pipeline.preprocessing.feature_screening import FeatureScreening
-
-
-DROP_COLUMNS = {
-    "time_stamp",
-    "asset_id",
-    "train_test",
-    "status_type_id",
-    "sequence_id",
-    "id",
-}
+from training.hyperparameters.feature_screening_defaults import (
+    DEFAULT_ALPHA,
+    DEFAULT_CSV_SEP,
+    DEFAULT_FF_THRESHOLD_GRID,
+    DEFAULT_MIN_MEAN_ABS_PB_R_GRID,
+    DEFAULT_MIN_PB_SIG_RATIO_GRID,
+    DEFAULT_MIN_PB_SIGN_CONSISTENCY_GRID,
+    DEFAULT_SAMPLE_PER_FILE,
+    DEFAULT_TARGET_COL,
+    DROP_COLUMNS,
+)
 
 
 def parse_float_grid(raw: str) -> list[float]:
@@ -158,14 +159,14 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=os.path.join(RESULTS_DIR, "feature_screening_sweep"),
     )
-    parser.add_argument("--sep", type=str, default=";")
-    parser.add_argument("--target-col", type=str, default="label")
-    parser.add_argument("--alpha", type=float, default=0.05)
-    parser.add_argument("--sample-per-file", type=int, default=10000)
-    parser.add_argument("--min-mean-abs-pb-r-grid", type=str, default="0.03,0.05,0.07,0.10")
-    parser.add_argument("--min-pb-sign-consistency-grid", type=str, default="0.60,0.70,0.80")
-    parser.add_argument("--min-pb-sig-ratio-grid", type=str, default="0.20,0.30,0.50")
-    parser.add_argument("--ff-threshold-grid", type=str, default="0.80,0.85,0.90")
+    parser.add_argument("--sep", type=str, default=DEFAULT_CSV_SEP)
+    parser.add_argument("--target-col", type=str, default=DEFAULT_TARGET_COL)
+    parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
+    parser.add_argument("--sample-per-file", type=int, default=DEFAULT_SAMPLE_PER_FILE)
+    parser.add_argument("--min-mean-abs-pb-r-grid", type=str, default=DEFAULT_MIN_MEAN_ABS_PB_R_GRID)
+    parser.add_argument("--min-pb-sign-consistency-grid", type=str, default=DEFAULT_MIN_PB_SIGN_CONSISTENCY_GRID)
+    parser.add_argument("--min-pb-sig-ratio-grid", type=str, default=DEFAULT_MIN_PB_SIG_RATIO_GRID)
+    parser.add_argument("--ff-threshold-grid", type=str, default=DEFAULT_FF_THRESHOLD_GRID)
     return parser.parse_args()
 
 

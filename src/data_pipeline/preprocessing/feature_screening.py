@@ -24,16 +24,25 @@ if str(SRC_ROOT) not in sys.path:
 
 try:
     from config import (
-        EXCLUDE_COLUMNS as REPO_EXCLUDE_COLUMNS,
-        RANDOM_SEED as REPO_RANDOM_SEED,
         RESULTS_DIR as REPO_RESULTS_DIR,
         WIND_FARM_A_DATASETS as REPO_DATASET_DIR,
     )
 except ImportError:
-    REPO_EXCLUDE_COLUMNS = None
-    REPO_RANDOM_SEED = 42
     REPO_RESULTS_DIR = None
     REPO_DATASET_DIR = None
+
+from training.hyperparameters.feature_screening_defaults import (
+    DEFAULT_ALPHA,
+    DEFAULT_CSV_SEP,
+    DEFAULT_FF_THRESHOLD,
+    DEFAULT_MIN_MEAN_ABS_PB_R,
+    DEFAULT_MIN_PB_SIG_RATIO,
+    DEFAULT_MIN_PB_SIGN_CONSISTENCY,
+    DEFAULT_SAMPLE_PER_FILE,
+    DEFAULT_TARGET_COL,
+    DROP_COLUMNS,
+)
+from training.hyperparameters.sequence_defaults import RANDOM_SEED
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,16 +57,9 @@ OUTPUT_DIR = (
     if REPO_RESULTS_DIR
     else DATASET_DIR / "screening_results"
 )
-CSV_SEP = ";"
-TARGET_COL = "label"
-DROP_COLUMNS = {"time_stamp", "asset_id", "train_test", "status_type_id", "sequence_id", "id"}
-
-DEFAULT_MIN_MEAN_ABS_PB_R = 0.05
-DEFAULT_MIN_PB_SIGN_CONSISTENCY = 0.60
-DEFAULT_MIN_PB_SIG_RATIO = 0.30
-DEFAULT_ALPHA = 0.05
-DEFAULT_FF_THRESHOLD = 0.85
-DEFAULT_RANDOM_STATE = REPO_RANDOM_SEED
+CSV_SEP = DEFAULT_CSV_SEP
+TARGET_COL = DEFAULT_TARGET_COL
+DEFAULT_RANDOM_STATE = RANDOM_SEED
 
 
 class FeatureScreening:
@@ -97,8 +99,8 @@ class FeatureScreening:
         drop_columns: set[str] | None = None,
     ) -> tuple[pd.DataFrame, pd.Series, list[str]]:
         sep = self.csv_sep
-        target_col = self.target_col 
-        drop_columns = self.drop_columns 
+        target_col = self.target_col
+        drop_columns = self.drop_columns
         df = pd.read_csv(fpath, sep=sep, low_memory=False)
         fname = Path(fpath).name
         if target_col not in df.columns:
@@ -284,7 +286,7 @@ class FeatureScreening:
         feature_cols,
         target_col: str | None = None,
         sep: str | None = None,
-        sample_per_file: int = 10_000,
+        sample_per_file: int = DEFAULT_SAMPLE_PER_FILE,
         random_state: int | None = None,
     ) -> pd.DataFrame:
         target_col = self.target_col if target_col is None else target_col
@@ -527,7 +529,7 @@ class FeatureScreening:
         min_pb_sign_consistency: float | None = None,
         min_pb_sig_ratio: float | None = None,
         ff_threshold: float | None = None,
-        sample_per_file: int = 10_000,
+        sample_per_file: int = DEFAULT_SAMPLE_PER_FILE,
     ) -> dict:
         dataset_dir = self.dataset_dir if dataset_dir is None else Path(dataset_dir)
         output_dir = self.output_dir if output_dir is None else Path(output_dir)

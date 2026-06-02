@@ -111,9 +111,8 @@ class CAREToCombinedCSV:
                         "not in event_info and not in event CSV."
                     )
 
-                # Feature engineering: angle → sin/cos, drop legacy counters
+                # Feature engineering: angle → sin/cos
                 df = self._engineer.engineer_angle_features(df)
-                df = self._engineer.drop_counter_features(df)
 
                 if feature_cols is None:
                     feature_cols = self._engineer.get_feature_columns(df)

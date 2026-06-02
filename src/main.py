@@ -24,6 +24,36 @@ SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+from training.hyperparameters.classifier_defaults import (
+    CLASSIFIER_LOSSES,
+    DEFAULT_CLASSIFIER_BATCH_SIZE,
+    DEFAULT_CLASSIFIER_DROPOUT,
+    DEFAULT_CLASSIFIER_EPOCHS,
+    DEFAULT_CLASSIFIER_FOCAL_ALPHA,
+    DEFAULT_CLASSIFIER_FOCAL_GAMMA,
+    DEFAULT_CLASSIFIER_L2,
+    DEFAULT_CLASSIFIER_LEARNING_RATE,
+    DEFAULT_CLASSIFIER_LOSS,
+    DEFAULT_CLASSIFIER_MODELS,
+    DEFAULT_SEQUENCE_WINDOWS,
+)
+from training.hyperparameters.feature_screening_defaults import (
+    DEFAULT_EDA_MAX_FEATURES,
+    DEFAULT_EDA_MAX_MISSING_PCT,
+    DEFAULT_EDA_MIN_CORR,
+    DEFAULT_EDA_REDUNDANCY_THRESHOLD,
+)
+from training.hyperparameters.sequence_defaults import (
+    DEFAULT_LABEL_MODE,
+    DEFAULT_PREDICTION_VAL_RATIO,
+    DEFAULT_SCALER_TYPE,
+    DEFAULT_TOP_K_WINDOWS,
+    DEFAULT_VALIDATION_SOURCE,
+    RANDOM_SEED,
+    STRIDE,
+    TIME_RESOLUTION,
+)
+
 
 def prediction_horizon_steps_from_hours(horizon_hours: int | None, time_resolution_minutes: int) -> int | None:
     """Convert a horizon in hours to whole timesteps for the sequence pipeline."""
@@ -44,7 +74,7 @@ def prediction_horizon_steps_from_hours(horizon_hours: int | None, time_resoluti
 def run_prepare_care(args: argparse.Namespace) -> None:
     """Build combined CSV from raw CARE per-event files, then prepare sequence exports."""
     import os
-    from config import PROCESSED_DATA_DIR, STRIDE, TIME_RESOLUTION, WIND_FARM_A_DIR, WIND_FARM_A_DATASETS
+    from config import PROCESSED_DATA_DIR, WIND_FARM_A_DIR, WIND_FARM_A_DATASETS
     from data_pipeline.preprocessing.build_combined_csv import CAREToCombinedCSV
     from data_pipeline.preprocessing.combined_sequence_pipeline import CombinedSequencePipeline
 
@@ -89,8 +119,7 @@ def run_prepare_care(args: argparse.Namespace) -> None:
 
 def run_prepare(args: argparse.Namespace) -> None:
     """Prepare classifier exports from a combined CSV."""
-    from config import STRIDE as _DEFAULT_STRIDE, TIME_RESOLUTION
-    stride = args.stride if args.stride is not None else _DEFAULT_STRIDE
+    stride = args.stride if args.stride is not None else STRIDE
     prediction_horizon_steps = prediction_horizon_steps_from_hours(
         args.prediction_horizon_hours,
         TIME_RESOLUTION,
@@ -142,7 +171,7 @@ def run_train_sequences(args: argparse.Namespace) -> None:
     exports_dir = args.exports_dir or os.path.join(PROCESSED_DATA_DIR, "sequence_exports")
     results_dir = args.results_dir or os.path.join(RESULTS_DIR, "sequence_training_results")
 
-    _classifier_choices = {"lstm", "gru", "cnn_lstm", "cnn_gru"}
+    _classifier_choices = set(DEFAULT_CLASSIFIER_MODELS)
 
     if args.model:
         unknown = [m for m in args.model if m not in _classifier_choices]
@@ -177,7 +206,7 @@ def add_label_mode_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--label-mode",
         type=str,
-        default="future_horizon",
+        default=DEFAULT_LABEL_MODE,
         choices=["future_horizon", "input_window"],
         help=(
             "Window label target. 'future_horizon' preserves the original "
@@ -239,7 +268,7 @@ def add_combined_csv_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--top-k-windows",
         type=int,
-        default=1,
+        default=DEFAULT_TOP_K_WINDOWS,
         help="Number of best windows to export after window search.",
     )
     parser.add_argument(
@@ -256,18 +285,18 @@ def add_combined_csv_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--combined-scaler",
         type=str,
-        default="minmax",
+        default=DEFAULT_SCALER_TYPE,
         choices=["minmax", "standard"],
         help="Scaler for combined CSV exports.",
     )
     parser.add_argument(
         "--validation-source",
         type=str,
-        default="train_tail",
+        default=DEFAULT_VALIDATION_SOURCE,
         choices=["train_tail", "prediction"],
         help=(
-            "How to create the validation split. 'train_tail' keeps the legacy "
-            "behavior by using the tail of each train segment. 'prediction' "
+            "How to create the validation split. 'train_tail' uses the tail "
+            "of each train segment. 'prediction' "
             "uses the first part of each prediction segment for validation and "
             "the rest for test."
         ),
@@ -275,7 +304,7 @@ def add_combined_csv_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--prediction-val-ratio",
         type=float,
-        default=0.5,
+        default=DEFAULT_PREDICTION_VAL_RATIO,
         help=(
             "When --validation-source prediction is used, fraction of each "
             "asset_id + sequence_id prediction segment assigned to validation."
@@ -289,12 +318,12 @@ def add_combined_csv_flags(parser: argparse.ArgumentParser) -> None:
         metavar="N",
         help=(
             "Stride (step) between sliding-window sequence starts in timesteps. "
-            "Defaults to the value in config.py (STRIDE=6, i.e. 1-hour steps). "
+            "Defaults to the centralized sequence setting (STRIDE=6, i.e. 1-hour steps). "
             "Larger values reduce overlap and dataset size; e.g. --stride 36 gives "
             "~75%% overlap with a 144-step window."
         ),
     )
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED)
     parser.add_argument(
         "--skip-classifier-export",
         action="store_true",
@@ -304,7 +333,7 @@ def add_combined_csv_flags(parser: argparse.ArgumentParser) -> None:
 
 
 def add_sequence_training_flags(parser: argparse.ArgumentParser) -> None:
-    classifier_choices = ["lstm", "gru", "cnn_lstm", "cnn_gru"]
+    classifier_choices = DEFAULT_CLASSIFIER_MODELS
     parser.add_argument(
         "--model",
         type=str,
@@ -335,7 +364,7 @@ def add_sequence_training_flags(parser: argparse.ArgumentParser) -> None:
         "--windows",
         type=int,
         nargs="+",
-        default=[24],
+        default=DEFAULT_SEQUENCE_WINDOWS,
         metavar="H",
         help="Window sizes to train.",
     )
@@ -347,7 +376,7 @@ def add_sequence_training_flags(parser: argparse.ArgumentParser) -> None:
         choices=classifier_choices,
         help="Supervised sequence classifiers to train.",
     )
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED)
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -358,18 +387,18 @@ def add_sequence_training_flags(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Skip verbose prediction CSV outputs.",
     )
-    parser.add_argument("--classifier-epochs", type=int, default=25)
-    parser.add_argument("--classifier-batch-size", type=int, default=256)
+    parser.add_argument("--classifier-epochs", type=int, default=DEFAULT_CLASSIFIER_EPOCHS)
+    parser.add_argument("--classifier-batch-size", type=int, default=DEFAULT_CLASSIFIER_BATCH_SIZE)
     parser.add_argument(
         "--classifier-learning-rate",
         type=float,
-        default=1e-3,
+        default=DEFAULT_CLASSIFIER_LEARNING_RATE,
         help="Adam learning rate for supervised classifier models.",
     )
     parser.add_argument(
         "--classifier-dropout",
         type=float,
-        default=None,
+        default=DEFAULT_CLASSIFIER_DROPOUT,
         help=(
             "Override classifier dropout rate for all classifier dropout layers. "
             "When omitted, each architecture uses its built-in defaults."
@@ -378,14 +407,14 @@ def add_sequence_training_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--classifier-l2",
         type=float,
-        default=0.0,
+        default=DEFAULT_CLASSIFIER_L2,
         help="L2 regularization strength for classifier Conv/RNN/Dense kernels.",
     )
     parser.add_argument(
         "--classifier-loss",
         type=str,
-        default="binary_crossentropy",
-        choices=["binary_crossentropy", "focal"],
+        default=DEFAULT_CLASSIFIER_LOSS,
+        choices=CLASSIFIER_LOSSES,
         help=(
             "Classifier loss. 'focal' uses BinaryFocalCrossentropy with class "
             "balancing enabled and disables external class_weight."
@@ -394,13 +423,13 @@ def add_sequence_training_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--classifier-focal-gamma",
         type=float,
-        default=2.0,
+        default=DEFAULT_CLASSIFIER_FOCAL_GAMMA,
         help="Gamma for focal loss when --classifier-loss focal is used.",
     )
     parser.add_argument(
         "--classifier-focal-alpha",
         type=float,
-        default=0.75,
+        default=DEFAULT_CLASSIFIER_FOCAL_ALPHA,
         help="Positive-class alpha for focal loss when --classifier-loss focal is used.",
     )
 
@@ -460,7 +489,7 @@ def add_eda_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-features",
         type=int,
-        default=30,
+        default=DEFAULT_EDA_MAX_FEATURES,
         metavar="N",
         help="Cap on features shown in correlation heatmap and distribution boxplots.",
     )
@@ -479,23 +508,23 @@ def add_eda_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--min-corr",
         type=float,
-        default=0.02,
+        default=DEFAULT_EDA_MIN_CORR,
         metavar="F",
-        help="Minimum |Spearman ρ| with label to keep a feature (default 0.02).",
+        help="Minimum |Spearman rho| with label to keep a feature (default 0.02).",
     )
     parser.add_argument(
         "--max-missing-pct",
         type=float,
-        default=80.0,
+        default=DEFAULT_EDA_MAX_MISSING_PCT,
         metavar="F",
         help="Drop features with missing %% above this (default 80).",
     )
     parser.add_argument(
         "--redundancy-threshold",
         type=float,
-        default=0.90,
+        default=DEFAULT_EDA_REDUNDANCY_THRESHOLD,
         metavar="F",
-        help="Inter-feature |Spearman ρ| above which the weaker feature is dropped (default 0.90).",
+        help="Inter-feature |Spearman rho| above which the weaker feature is dropped (default 0.90).",
     )
 
 
@@ -536,10 +565,10 @@ def add_prepare_care_flags(parser: argparse.ArgumentParser) -> None:
         metavar="H",
         help="Future prediction horizon in hours. Defaults to the problem config value when omitted.",
     )
-    parser.add_argument("--top-k-windows", type=int, default=1)
+    parser.add_argument("--top-k-windows", type=int, default=DEFAULT_TOP_K_WINDOWS)
     parser.add_argument("--skip-window-search", action="store_true")
     parser.add_argument("--expected-feature-count", type=int, default=None)
-    parser.add_argument("--combined-scaler", type=str, default="minmax", choices=["minmax", "standard"])
+    parser.add_argument("--combined-scaler", type=str, default=DEFAULT_SCALER_TYPE, choices=["minmax", "standard"])
     parser.add_argument(
         "--stride",
         type=int,
@@ -547,18 +576,18 @@ def add_prepare_care_flags(parser: argparse.ArgumentParser) -> None:
         metavar="N",
         help=(
             "Stride (step) between sliding-window sequence starts in timesteps. "
-            "Defaults to STRIDE in config.py (6 = 1-hour steps)."
+            "Defaults to the centralized STRIDE setting (6 = 1-hour steps)."
         ),
     )
     parser.add_argument(
         "--validation-source",
         type=str,
-        default="train_tail",
+        default=DEFAULT_VALIDATION_SOURCE,
         choices=["train_tail", "prediction"],
     )
-    parser.add_argument("--prediction-val-ratio", type=float, default=0.5)
+    parser.add_argument("--prediction-val-ratio", type=float, default=DEFAULT_PREDICTION_VAL_RATIO)
     add_label_mode_flag(parser)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED)
     parser.add_argument(
         "--skip-classifier-export",
         action="store_true",

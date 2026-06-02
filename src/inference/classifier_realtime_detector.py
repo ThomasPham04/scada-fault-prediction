@@ -22,6 +22,7 @@ import joblib
 import numpy as np
 import tensorflow as tf
 
+from training.hyperparameters.inference_defaults import DEFAULT_THRESHOLD
 from training.sequence_utils import load_json
 
 
@@ -43,7 +44,7 @@ class RealTimeSequenceClassifier:
         model_path: str | Path,
         metadata_path: str | Path,
         scaler_dir: str | Path,
-        threshold: float = 0.5,
+        threshold: float = DEFAULT_THRESHOLD,
         strict_features: bool = True,
     ) -> None:
         self.model_path = Path(model_path)
@@ -101,10 +102,13 @@ class RealTimeSequenceClassifier:
         if threshold is None and metrics_path.exists():
             metrics = load_json(metrics_path)
             threshold = float(
-                metrics.get("selected_threshold", metrics.get("summary", {}).get("threshold", 0.5))
+                metrics.get(
+                    "selected_threshold",
+                    metrics.get("summary", {}).get("threshold", DEFAULT_THRESHOLD),
+                )
             )
         if threshold is None:
-            threshold = 0.5
+            threshold = DEFAULT_THRESHOLD
         return cls(
             model_path=model_dir / "model.keras",
             metadata_path=export_classifier_dir / "metadata.json",

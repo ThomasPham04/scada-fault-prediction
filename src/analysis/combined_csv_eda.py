@@ -34,20 +34,21 @@ except ImportError:
     PROCESSED_DATA_DIR = str(REPO_ROOT / "Dataset" / "processed")
     RESULTS_DIR = str(REPO_ROOT / "results")
 
+from training.hyperparameters.feature_screening_defaults import (
+    DEFAULT_ALPHA,
+    DEFAULT_COMBINED_CSV_SEP,
+    DEFAULT_TARGET_COL,
+    DROP_COLUMNS,
+)
+from training.hyperparameters.sequence_defaults import RANDOM_SEED
+
 
 DEFAULT_CSV = Path(PROCESSED_DATA_DIR) / "combined_dataset.csv"
 DEFAULT_OUTPUT_DIR = Path(RESULTS_DIR) / "eda_combined_csv"
 DEFAULT_SELECTED_FEATURE_FILE = (
     Path(RESULTS_DIR) / "feature_screening_combined_csv" / "final_selected_features.csv"
 )
-DEFAULT_METADATA_COLUMNS = {
-    "time_stamp",
-    "asset_id",
-    "train_test",
-    "status_type_id",
-    "sequence_id",
-    "id",
-}
+DEFAULT_METADATA_COLUMNS = set(DROP_COLUMNS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,15 +57,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--csv", type=str, default=str(DEFAULT_CSV))
     parser.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
-    parser.add_argument("--sep", type=str, default=",")
-    parser.add_argument("--target-col", type=str, default="label")
+    parser.add_argument("--sep", type=str, default=DEFAULT_COMBINED_CSV_SEP)
+    parser.add_argument("--target-col", type=str, default=DEFAULT_TARGET_COL)
     parser.add_argument("--time-col", type=str, default="time_stamp")
     parser.add_argument("--selected-feature-file", type=str, default=str(DEFAULT_SELECTED_FEATURE_FILE))
     parser.add_argument("--sample-rows", type=int, default=100_000)
     parser.add_argument("--plot-rows", type=int, default=5_000)
     parser.add_argument("--top-features", type=int, default=20)
-    parser.add_argument("--alpha", type=float, default=0.05)
-    parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
+    parser.add_argument("--random-state", type=int, default=RANDOM_SEED)
     return parser.parse_args()
 
 
