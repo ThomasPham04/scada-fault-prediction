@@ -32,7 +32,6 @@ RESULTS_DIR = os.path.join(BASE_DIR, "results")
 WIND_FARM_A_DIR = os.path.join(RAW_DATA_DIR, "Wind Farm A")
 WIND_FARM_A_DATASETS = os.path.join(WIND_FARM_A_DIR, "datasets")
 WIND_FARM_A_PROCESSED = os.path.join(PROCESSED_DATA_DIR, "Wind Farm A")
-PER_ASSET_PROCESSED_DIR = os.path.join(WIND_FARM_A_PROCESSED, "per_asset")  # per-turbine pipeline
 
 
 # Experiment outputs
@@ -121,7 +120,7 @@ WIND_POWER_FEATURES = [
     'reactive_power_27_min',
     'reactive_power_27_std',
     'reactive_power_28_avg',
-    'reactive_power_28_max',
+    'reactive_power_28_max', 
     'reactive_power_28_min',
     'reactive_power_28_std',
     'sensor_31_avg',  # Grid reactive power
